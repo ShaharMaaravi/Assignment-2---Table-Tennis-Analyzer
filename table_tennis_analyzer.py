@@ -25,6 +25,18 @@ START_FRAME = 0
 END_FRAME = 200
 CONFIDENCE = 0.25
 
+# Side-view validation thresholds, expressed relative to the frame dimensions.
+MIN_PLAYER_AREA_RATIO = 0.005
+MAX_PLAYER_AREA_RATIO = 0.20
+MIN_CANDIDATE_TO_LARGEST_RATIO = 0.40
+MIN_PLAYER_SIZE_SIMILARITY = 0.25
+MIN_HORIZONTAL_SEPARATION_RATIO = 0.25
+MAX_VERTICAL_SEPARATION_RATIO = 0.25
+LEFT_PLAYER_MAX_X_RATIO = 0.48
+RIGHT_PLAYER_MIN_X_RATIO = 0.52
+MIN_VISIBLE_KEYPOINTS = 6
+KEYPOINT_CONFIDENCE = 0.25
+
 Position = tuple[float, float]
 
 
@@ -72,6 +84,70 @@ def find_player_positions(result: Any) -> tuple[Position | None, Position | None
     ]
     centers.sort(key=lambda position: position[0])
     return centers[0], centers[-1]
+
+
+def is_valid_frame(frame: np.ndarray, result: Any) -> bool:
+    """Return whether detections resemble the normal side view of the match."""
+    boxes = result.boxes.xyxy.cpu().numpy()
+    if len(boxes) < 2:
+        return False
+
+    height, width = frame.shape[:2]
+    frame_area = width * height
+    areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+
+    # Ignore people much smaller than the largest detection (usually the referee),
+    # then choose the widest-separated pair. This also tolerates duplicate YOLO boxes.
+    candidate_indices = np.flatnonzero(
+        areas >= areas.max() * MIN_CANDIDATE_TO_LARGEST_RATIO
+    )
+    if len(candidate_indices) < 2:
+        return False
+
+    candidate_centers_x = (
+        boxes[candidate_indices, 0] + boxes[candidate_indices, 2]
+    ) / 2
+    left_candidate = candidate_indices[np.argmin(candidate_centers_x)]
+    right_candidate = candidate_indices[np.argmax(candidate_centers_x)]
+    if left_candidate == right_candidate:
+        return False
+
+    player_indices = np.asarray([left_candidate, right_candidate])
+    player_boxes = boxes[player_indices]
+    player_areas = areas[player_indices]
+
+    area_ratios = player_areas / frame_area
+    if np.any(area_ratios < MIN_PLAYER_AREA_RATIO):
+        return False
+    if np.any(area_ratios > MAX_PLAYER_AREA_RATIO):
+        return False
+
+    size_similarity = float(player_areas.min() / player_areas.max())
+    if size_similarity < MIN_PLAYER_SIZE_SIMILARITY:
+        return False
+
+    centers_x = (player_boxes[:, 0] + player_boxes[:, 2]) / 2
+    centers_y = (player_boxes[:, 1] + player_boxes[:, 3]) / 2
+    centers_x.sort()
+
+    # In the valid side view, the players straddle the table and are at similar heights.
+    if centers_x[0] > width * LEFT_PLAYER_MAX_X_RATIO:
+        return False
+    if centers_x[1] < width * RIGHT_PLAYER_MIN_X_RATIO:
+        return False
+    if centers_x[1] - centers_x[0] < width * MIN_HORIZONTAL_SEPARATION_RATIO:
+        return False
+    if abs(float(centers_y[1] - centers_y[0])) > height * MAX_VERTICAL_SEPARATION_RATIO:
+        return False
+
+    keypoint_confidences = result.keypoints.conf
+    if keypoint_confidences is not None:
+        player_keypoints = keypoint_confidences[player_indices].cpu().numpy()
+        visible_counts = (player_keypoints >= KEYPOINT_CONFIDENCE).sum(axis=1)
+        if np.any(visible_counts < MIN_VISIBLE_KEYPOINTS):
+            return False
+
+    return True
 
 
 def csv_position(position: Position | None) -> tuple[str | float, str | float]:
@@ -124,7 +200,7 @@ def create_heatmap(
     plt.close(figure)
 
 
-def analyze_video() -> tuple[int, int, int]:
+def analyze_video() -> tuple[int, int, int, int, int]:
     """Create the annotated video, position CSV, and player heatmap."""
     capture = cv2.VideoCapture(str(INPUT_VIDEO_PATH))
     if not capture.isOpened():
@@ -151,7 +227,9 @@ def analyze_video() -> tuple[int, int, int]:
 
         capture.set(cv2.CAP_PROP_POS_FRAMES, START_FRAME)
         frame_number = START_FRAME
+        inspected_frames = 0
         written_frames = 0
+        invalid_frames = 0
         missing_position_frames = 0
         background_frame: np.ndarray | None = None
         player1_positions: list[Position] = []
@@ -174,14 +252,27 @@ def analyze_video() -> tuple[int, int, int]:
                 if not success:
                     break
 
-                if background_frame is None:
-                    background_frame = frame.copy()
-
+                current_frame_number = frame_number
+                frame_number += 1
+                inspected_frames += 1
                 result = model.predict(
                     source=frame,
                     conf=CONFIDENCE,
                     verbose=False,
                 )[0]
+
+                if not is_valid_frame(frame, result):
+                    invalid_frames += 1
+                    if inspected_frames % 25 == 0:
+                        print(
+                            f"Inspected {inspected_frames} frame(s); "
+                            f"kept {written_frames}."
+                        )
+                    continue
+
+                if background_frame is None:
+                    background_frame = frame.copy()
+
                 player1, player2 = find_player_positions(result)
 
                 if player1 is None or player2 is None:
@@ -193,7 +284,13 @@ def analyze_video() -> tuple[int, int, int]:
                 player1_x, player1_y = csv_position(player1)
                 player2_x, player2_y = csv_position(player2)
                 csv_writer.writerow(
-                    [frame_number, player1_x, player1_y, player2_x, player2_y]
+                    [
+                        current_frame_number,
+                        player1_x,
+                        player1_y,
+                        player2_x,
+                        player2_y,
+                    ]
                 )
 
                 annotated_frame = result.plot(
@@ -206,16 +303,24 @@ def analyze_video() -> tuple[int, int, int]:
                 writer.write(annotated_frame)
 
                 written_frames += 1
-                frame_number += 1
 
-                if written_frames % 25 == 0:
-                    print(f"Processed {written_frames} frame(s)...")
+                if inspected_frames % 25 == 0:
+                    print(
+                        f"Inspected {inspected_frames} frame(s); "
+                        f"kept {written_frames}."
+                    )
 
         if background_frame is None:
             raise RuntimeError("No video frames were processed.")
 
         create_heatmap(background_frame, player1_positions, player2_positions)
-        return written_frames, len(player1_positions), missing_position_frames
+        return (
+            inspected_frames,
+            written_frames,
+            invalid_frames,
+            len(player1_positions),
+            missing_position_frames,
+        )
     finally:
         capture.release()
         if writer is not None:
@@ -225,12 +330,19 @@ def analyze_video() -> tuple[int, int, int]:
 def main() -> None:
     """Validate settings, process the video, and report the result."""
     validate_settings()
-    written_frames, position_frames, missing_position_frames = analyze_video()
+    (
+        inspected_frames,
+        written_frames,
+        invalid_frames,
+        position_frames,
+        missing_position_frames,
+    ) = analyze_video()
 
     if written_frames == 0:
         raise RuntimeError("No video frames were processed.")
 
-    print(f"Finished processing {written_frames} frame(s).")
+    print(f"Finished inspecting {inspected_frames} frame(s).")
+    print(f"Kept {written_frames} valid frame(s); skipped {invalid_frames} invalid frame(s).")
     print(f"Recorded both player positions in {position_frames} frame(s).")
     if missing_position_frames:
         print(f"Missing two-player detections in {missing_position_frames} frame(s).")
