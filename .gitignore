@@ -1,0 +1,15 @@
+# Python virtual environment
+.venv/
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+
+# Environment variables and local secrets
+.env
+.env.*
+
+# macOS and editor metadata
+.DS_Store
+.vscode/
+
