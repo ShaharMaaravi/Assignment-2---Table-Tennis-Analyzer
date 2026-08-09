@@ -5,6 +5,11 @@
 __pycache__/
 *.py[cod]
 
+# Downloaded model weights and generated inference output
+*.pt
+output_with_detections.*
+runs/
+
 # Environment variables and local secrets
 .env
 .env.*
@@ -12,4 +17,3 @@ __pycache__/
 # macOS and editor metadata
 .DS_Store
 .vscode/
-
