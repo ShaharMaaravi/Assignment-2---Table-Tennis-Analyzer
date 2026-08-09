@@ -9,6 +9,8 @@ __pycache__/
 *.pt
 input.mp4
 output_with_detections.*
+player_positions.csv
+player_position_heatmap.png
 runs/
 
 # Environment variables and local secrets

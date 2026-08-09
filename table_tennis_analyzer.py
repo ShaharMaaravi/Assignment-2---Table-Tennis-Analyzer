@@ -1,19 +1,31 @@
-"""Draw person bounding boxes and poses on frames from a table-tennis video."""
+"""Analyze player poses and positions in a table-tennis video."""
 
+import csv
 from pathlib import Path
+from typing import Any
 
 import cv2
+import matplotlib
+import numpy as np
 from ultralytics import YOLO
 
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
 
-MODEL_NAME = "yolo26n-pose.pt"
+
+# The small model was more consistent than nano on this video, at about 2x the runtime.
+MODEL_NAME = "yolo26s-pose.pt"
 INPUT_VIDEO_PATH = Path("input.mp4")
 OUTPUT_VIDEO_PATH = Path("output_with_detections.mp4")
+POSITIONS_CSV_PATH = Path("player_positions.csv")
+HEATMAP_PATH = Path("player_position_heatmap.png")
 
 # END_FRAME is inclusive. Set END_FRAME to 0 to process the entire video.
 START_FRAME = 0
 END_FRAME = 200
 CONFIDENCE = 0.25
+
+Position = tuple[float, float]
 
 
 def validate_settings() -> None:
@@ -48,8 +60,72 @@ def create_video_writer(
     return writer
 
 
-def analyze_video() -> int:
-    """Run pose detection on the selected frames and return the number written."""
+def find_player_positions(result: Any) -> tuple[Position | None, Position | None]:
+    """Return centers of the leftmost and rightmost detected person boxes."""
+    boxes = result.boxes.xyxy.cpu().numpy()
+    if len(boxes) < 2:
+        return None, None
+
+    centers = [
+        ((float(x1) + float(x2)) / 2, (float(y1) + float(y2)) / 2)
+        for x1, y1, x2, y2 in boxes
+    ]
+    centers.sort(key=lambda position: position[0])
+    return centers[0], centers[-1]
+
+
+def csv_position(position: Position | None) -> tuple[str | float, str | float]:
+    """Convert a position to rounded CSV values, or blanks when it is missing."""
+    if position is None:
+        return "", ""
+    return round(position[0], 2), round(position[1], 2)
+
+
+def create_heatmap(
+    background_frame: np.ndarray,
+    player1_positions: list[Position],
+    player2_positions: list[Position],
+) -> None:
+    """Overlay a combined player-position density map on a video frame."""
+    all_positions = player1_positions + player2_positions
+    if not all_positions:
+        raise RuntimeError("No player positions were found for the heatmap.")
+
+    height, width = background_frame.shape[:2]
+    positions = np.asarray(all_positions)
+    density, _, _ = np.histogram2d(
+        positions[:, 0],
+        positions[:, 1],
+        bins=(80, 45),
+        range=((0, width), (0, height)),
+    )
+
+    # histogram2d returns x as the first axis. Transpose it to image row/column order.
+    density = cv2.GaussianBlur(density.T, (0, 0), sigmaX=1.5, sigmaY=1.5)
+    visible_density = np.ma.masked_where(density <= 0.01, density)
+
+    figure, axis = plt.subplots(figsize=(14, 8))
+    axis.imshow(cv2.cvtColor(background_frame, cv2.COLOR_BGR2RGB))
+    heatmap = axis.imshow(
+        visible_density,
+        cmap="turbo",
+        alpha=0.65,
+        interpolation="bilinear",
+        extent=(0, width, height, 0),
+    )
+    axis.set_title("Combined Player Position Heatmap")
+    axis.set_xlabel("X Position")
+    axis.set_ylabel("Y Position")
+    axis.set_xlim(0, width)
+    axis.set_ylim(height, 0)
+    figure.colorbar(heatmap, ax=axis, label="Density")
+    figure.tight_layout()
+    figure.savefig(HEATMAP_PATH, dpi=160)
+    plt.close(figure)
+
+
+def analyze_video() -> tuple[int, int, int]:
+    """Create the annotated video, position CSV, and player heatmap."""
     capture = cv2.VideoCapture(str(INPUT_VIDEO_PATH))
     if not capture.isOpened():
         raise OSError(f"Could not open input video: {INPUT_VIDEO_PATH}")
@@ -76,33 +152,70 @@ def analyze_video() -> int:
         capture.set(cv2.CAP_PROP_POS_FRAMES, START_FRAME)
         frame_number = START_FRAME
         written_frames = 0
+        missing_position_frames = 0
+        background_frame: np.ndarray | None = None
+        player1_positions: list[Position] = []
+        player2_positions: list[Position] = []
 
-        while END_FRAME == 0 or frame_number <= END_FRAME:
-            success, frame = capture.read()
-            if not success:
-                break
-
-            result = model.predict(
-                source=frame,
-                conf=CONFIDENCE,
-                verbose=False,
-            )[0]
-            annotated_frame = result.plot(
-                boxes=True,
-                labels=True,
-                kpt_line=True,
-                kpt_radius=5,
-                line_width=2,
+        with POSITIONS_CSV_PATH.open("w", newline="", encoding="utf-8") as csv_file:
+            csv_writer = csv.writer(csv_file)
+            csv_writer.writerow(
+                [
+                    "frame",
+                    "player1_position_x",
+                    "player1_position_y",
+                    "player2_position_x",
+                    "player2_position_y",
+                ]
             )
-            writer.write(annotated_frame)
 
-            written_frames += 1
-            frame_number += 1
+            while END_FRAME == 0 or frame_number <= END_FRAME:
+                success, frame = capture.read()
+                if not success:
+                    break
 
-            if written_frames % 25 == 0:
-                print(f"Processed {written_frames} frame(s)...")
+                if background_frame is None:
+                    background_frame = frame.copy()
 
-        return written_frames
+                result = model.predict(
+                    source=frame,
+                    conf=CONFIDENCE,
+                    verbose=False,
+                )[0]
+                player1, player2 = find_player_positions(result)
+
+                if player1 is None or player2 is None:
+                    missing_position_frames += 1
+                else:
+                    player1_positions.append(player1)
+                    player2_positions.append(player2)
+
+                player1_x, player1_y = csv_position(player1)
+                player2_x, player2_y = csv_position(player2)
+                csv_writer.writerow(
+                    [frame_number, player1_x, player1_y, player2_x, player2_y]
+                )
+
+                annotated_frame = result.plot(
+                    boxes=True,
+                    labels=True,
+                    kpt_line=True,
+                    kpt_radius=5,
+                    line_width=2,
+                )
+                writer.write(annotated_frame)
+
+                written_frames += 1
+                frame_number += 1
+
+                if written_frames % 25 == 0:
+                    print(f"Processed {written_frames} frame(s)...")
+
+        if background_frame is None:
+            raise RuntimeError("No video frames were processed.")
+
+        create_heatmap(background_frame, player1_positions, player2_positions)
+        return written_frames, len(player1_positions), missing_position_frames
     finally:
         capture.release()
         if writer is not None:
@@ -112,13 +225,18 @@ def analyze_video() -> int:
 def main() -> None:
     """Validate settings, process the video, and report the result."""
     validate_settings()
-    written_frames = analyze_video()
+    written_frames, position_frames, missing_position_frames = analyze_video()
 
     if written_frames == 0:
         raise RuntimeError("No video frames were processed.")
 
     print(f"Finished processing {written_frames} frame(s).")
+    print(f"Recorded both player positions in {position_frames} frame(s).")
+    if missing_position_frames:
+        print(f"Missing two-player detections in {missing_position_frames} frame(s).")
     print(f"Saved annotated video to: {OUTPUT_VIDEO_PATH.resolve()}")
+    print(f"Saved player positions to: {POSITIONS_CSV_PATH.resolve()}")
+    print(f"Saved player heatmap to: {HEATMAP_PATH.resolve()}")
 
 
 if __name__ == "__main__":
