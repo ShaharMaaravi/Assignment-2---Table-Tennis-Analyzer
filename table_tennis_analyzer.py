@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+import easyocr
 import matplotlib
 import numpy as np
 from ultralytics import YOLO
@@ -19,6 +20,8 @@ INPUT_VIDEO_PATH = Path("input.mp4")
 OUTPUT_VIDEO_PATH = Path("output_with_detections.mp4")
 POSITIONS_CSV_PATH = Path("player_positions.csv")
 HEATMAP_PATH = Path("player_position_heatmap.png")
+SCORE_CHART_PATH = Path("score_over_time.png")
+EASYOCR_MODEL_DIRECTORY = Path(".easyocr")
 
 # END_FRAME is inclusive. Set END_FRAME to 0 to process the entire video.
 START_FRAME = 0
@@ -37,7 +40,19 @@ RIGHT_PLAYER_MIN_X_RATIO = 0.52
 MIN_VISIBLE_KEYPOINTS = 6
 KEYPOINT_CONFIDENCE = 0.25
 
+# The broadcast scoreboard is fixed in the lower-left corner of a 16:9 frame.
+SCOREBOARD_LEFT_RATIO = 400 / 1920
+SCOREBOARD_RIGHT_RATIO = 600 / 1920
+SCOREBOARD_TOP_RATIO = 940 / 1080
+SCORE_OCR_INTERVAL = 25
+SCORE_OCR_SCALE = 3
+SCORE_OCR_MIN_CONFIDENCE = 0.35
+SCOREBOARD_ROW_SPLIT_RATIO = 0.30
+MAX_GAMES_WON = 7
+MAX_CURRENT_GAME_POINTS = 30
+
 Position = tuple[float, float]
+Score = tuple[int, int, int, int]
 
 
 def validate_settings() -> None:
@@ -157,6 +172,71 @@ def csv_position(position: Position | None) -> tuple[str | float, str | float]:
     return round(position[0], 2), round(position[1], 2)
 
 
+def read_score(frame: np.ndarray, reader: easyocr.Reader) -> Score | None:
+    """Read the four scoreboard digits as games/points for the two players."""
+    height, width = frame.shape[:2]
+    x1 = int(width * SCOREBOARD_LEFT_RATIO)
+    x2 = int(width * SCOREBOARD_RIGHT_RATIO)
+    y1 = int(height * SCOREBOARD_TOP_RATIO)
+    scoreboard = frame[y1:height, x1:x2]
+
+    if scoreboard.size == 0:
+        return None
+
+    scoreboard = cv2.resize(
+        scoreboard,
+        None,
+        fx=SCORE_OCR_SCALE,
+        fy=SCORE_OCR_SCALE,
+        interpolation=cv2.INTER_CUBIC,
+    )
+    detections = reader.readtext(
+        scoreboard,
+        allowlist="0123456789",
+        detail=1,
+        paragraph=False,
+    )
+
+    # Assign each OCR result to one of the fixed 2x2 scoreboard cells.
+    cells: dict[tuple[int, int], tuple[float, int]] = {}
+    score_height, score_width = scoreboard.shape[:2]
+
+    for box, text, confidence in detections:
+        digits = "".join(character for character in text if character.isdigit())
+        confidence = float(confidence)
+        if not digits or confidence < SCORE_OCR_MIN_CONFIDENCE:
+            continue
+
+        center_x = sum(float(point[0]) for point in box) / 4
+        center_y = sum(float(point[1]) for point in box) / 4
+        row = 0 if center_y < score_height * SCOREBOARD_ROW_SPLIT_RATIO else 1
+        column = 0 if center_x < score_width / 2 else 1
+        value = int(digits)
+
+        maximum = MAX_GAMES_WON if column == 0 else MAX_CURRENT_GAME_POINTS
+        if value > maximum:
+            continue
+
+        existing = cells.get((row, column))
+        if existing is None or confidence > existing[0]:
+            cells[(row, column)] = (confidence, value)
+
+    required_cells = ((0, 0), (0, 1), (1, 0), (1, 1))
+    if not all(cell in cells for cell in required_cells):
+        return None
+
+    return tuple(cells[cell][1] for cell in required_cells)
+
+
+def calculated_scores(score: Score) -> tuple[int, int]:
+    """Convert games won and current points to one chart value per player."""
+    player1_games, player1_points, player2_games, player2_points = score
+    return (
+        player1_games * 10 + player1_points,
+        player2_games * 10 + player2_points,
+    )
+
+
 def create_heatmap(
     background_frame: np.ndarray,
     player1_positions: list[Position],
@@ -200,8 +280,51 @@ def create_heatmap(
     plt.close(figure)
 
 
-def analyze_video() -> tuple[int, int, int, int, int]:
-    """Create the annotated video, position CSV, and player heatmap."""
+def create_score_chart(
+    frame_numbers: list[int],
+    player1_scores: list[int],
+    player2_scores: list[int],
+) -> None:
+    """Save both players' calculated scores as step lines over source frames."""
+    figure, axis = plt.subplots(figsize=(12, 6))
+
+    if frame_numbers:
+        axis.step(
+            frame_numbers,
+            player1_scores,
+            where="post",
+            label="Player 1 (top scoreboard row)",
+            linewidth=2,
+        )
+        axis.step(
+            frame_numbers,
+            player2_scores,
+            where="post",
+            label="Player 2 (bottom scoreboard row)",
+            linewidth=2,
+        )
+        axis.legend()
+    else:
+        axis.text(
+            0.5,
+            0.5,
+            "No scoreboard was detected in the selected frame range",
+            ha="center",
+            va="center",
+            transform=axis.transAxes,
+        )
+
+    axis.set_title("Player Scores Over Time")
+    axis.set_xlabel("Source Frame")
+    axis.set_ylabel("Calculated Score (games won × 10 + current points)")
+    axis.grid(alpha=0.3)
+    figure.tight_layout()
+    figure.savefig(SCORE_CHART_PATH, dpi=160)
+    plt.close(figure)
+
+
+def analyze_video() -> tuple[int, int, int, int, int, int]:
+    """Create the annotated video, position CSV, heatmap, and score chart."""
     capture = cv2.VideoCapture(str(INPUT_VIDEO_PATH))
     if not capture.isOpened():
         raise OSError(f"Could not open input video: {INPUT_VIDEO_PATH}")
@@ -224,6 +347,12 @@ def analyze_video() -> tuple[int, int, int, int, int]:
 
         writer = create_video_writer(OUTPUT_VIDEO_PATH, fps, (width, height))
         model = YOLO(MODEL_NAME)
+        score_reader = easyocr.Reader(
+            ["en"],
+            gpu=False,
+            model_storage_directory=str(EASYOCR_MODEL_DIRECTORY),
+            verbose=False,
+        )
 
         capture.set(cv2.CAP_PROP_POS_FRAMES, START_FRAME)
         frame_number = START_FRAME
@@ -234,6 +363,11 @@ def analyze_video() -> tuple[int, int, int, int, int]:
         background_frame: np.ndarray | None = None
         player1_positions: list[Position] = []
         player2_positions: list[Position] = []
+        last_score: Score | None = None
+        recognized_score_samples = 0
+        score_frame_numbers: list[int] = []
+        player1_scores: list[int] = []
+        player2_scores: list[int] = []
 
         with POSITIONS_CSV_PATH.open("w", newline="", encoding="utf-8") as csv_file:
             csv_writer = csv.writer(csv_file)
@@ -260,6 +394,14 @@ def analyze_video() -> tuple[int, int, int, int, int]:
                     conf=CONFIDENCE,
                     verbose=False,
                 )[0]
+
+                if (
+                    current_frame_number - START_FRAME
+                ) % SCORE_OCR_INTERVAL == 0:
+                    recognized_score = read_score(frame, score_reader)
+                    if recognized_score is not None:
+                        last_score = recognized_score
+                        recognized_score_samples += 1
 
                 if not is_valid_frame(frame, result):
                     invalid_frames += 1
@@ -293,6 +435,12 @@ def analyze_video() -> tuple[int, int, int, int, int]:
                     ]
                 )
 
+                if last_score is not None:
+                    player1_score, player2_score = calculated_scores(last_score)
+                    score_frame_numbers.append(current_frame_number)
+                    player1_scores.append(player1_score)
+                    player2_scores.append(player2_score)
+
                 annotated_frame = result.plot(
                     boxes=True,
                     labels=True,
@@ -314,12 +462,14 @@ def analyze_video() -> tuple[int, int, int, int, int]:
             raise RuntimeError("No video frames were processed.")
 
         create_heatmap(background_frame, player1_positions, player2_positions)
+        create_score_chart(score_frame_numbers, player1_scores, player2_scores)
         return (
             inspected_frames,
             written_frames,
             invalid_frames,
             len(player1_positions),
             missing_position_frames,
+            recognized_score_samples,
         )
     finally:
         capture.release()
@@ -336,6 +486,7 @@ def main() -> None:
         invalid_frames,
         position_frames,
         missing_position_frames,
+        recognized_score_samples,
     ) = analyze_video()
 
     if written_frames == 0:
@@ -346,9 +497,11 @@ def main() -> None:
     print(f"Recorded both player positions in {position_frames} frame(s).")
     if missing_position_frames:
         print(f"Missing two-player detections in {missing_position_frames} frame(s).")
+    print(f"Recognized the scoreboard in {recognized_score_samples} OCR sample(s).")
     print(f"Saved annotated video to: {OUTPUT_VIDEO_PATH.resolve()}")
     print(f"Saved player positions to: {POSITIONS_CSV_PATH.resolve()}")
     print(f"Saved player heatmap to: {HEATMAP_PATH.resolve()}")
+    print(f"Saved score chart to: {SCORE_CHART_PATH.resolve()}")
 
 
 if __name__ == "__main__":

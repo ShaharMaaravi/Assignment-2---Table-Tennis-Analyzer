@@ -7,10 +7,12 @@ __pycache__/
 
 # Downloaded model weights and generated inference output
 *.pt
+.easyocr/
 input.mp4
 output_with_detections.*
 player_positions.csv
 player_position_heatmap.png
+score_over_time.png
 runs/
 
 # Environment variables and local secrets
