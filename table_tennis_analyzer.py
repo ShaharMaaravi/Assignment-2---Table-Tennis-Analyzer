@@ -1,6 +1,10 @@
 """Analyze player poses and positions in a table-tennis video."""
 
 import csv
+import json
+import os
+from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +12,8 @@ import cv2
 import easyocr
 import matplotlib
 import numpy as np
+from dotenv import load_dotenv
+from inference_sdk import InferenceConfiguration, InferenceHTTPClient
 from ultralytics import YOLO
 
 matplotlib.use("Agg")
@@ -21,6 +27,9 @@ OUTPUT_VIDEO_PATH = Path("output_with_detections.mp4")
 POSITIONS_CSV_PATH = Path("player_positions.csv")
 HEATMAP_PATH = Path("player_position_heatmap.png")
 SCORE_CHART_PATH = Path("score_over_time.png")
+BALL_POSITIONS_CSV_PATH = Path("ball_positions.csv")
+BALL_SPEED_CHART_PATH = Path("ball_speed_over_time.png")
+BALL_PREDICTION_CACHE_PATH = Path(".roboflow_prediction_cache.json")
 EASYOCR_MODEL_DIRECTORY = Path(".easyocr")
 
 # END_FRAME is inclusive. Set END_FRAME to 0 to process the entire video.
@@ -51,12 +60,51 @@ SCOREBOARD_ROW_SPLIT_RATIO = 0.30
 MAX_GAMES_WON = 7
 MAX_CURRENT_GAME_POINTS = 30
 
+# Roboflow ball detector and trajectory settings.
+ROBOFLOW_API_URL = "https://serverless.roboflow.com"
+ROBOFLOW_API_KEY_ENV = "ROBOFLOW_API_KEY"
+ROBOFLOW_MODEL_ID_ENV = "ROBOFLOW_MODEL_ID"
+BALL_CONFIDENCE = 0.20
+BALL_MAX_TRACKING_GAP_FRAMES = 10
+BALL_MAX_DISPLACEMENT_PX_PER_FRAME = 120.0
+BALL_MAX_SPEED_PX_PER_SECOND = 6000.0
+BALL_MIN_MOTION_SCORE = 2.5
+BALL_MIN_X_RATIO = 0.12
+BALL_MAX_X_RATIO = 0.88
+BALL_MIN_Y_RATIO = 0.34
+BALL_MAX_Y_RATIO = 0.72
+BALL_SPEED_SMOOTHING_WINDOW = 5
+BALL_TRAIL_LENGTH = 18
+BALL_FAST_SPEED_PX_PER_SECOND = 3000.0
+
 Position = tuple[float, float]
 Score = tuple[int, int, int, int]
 
 
+@dataclass(frozen=True)
+class BallDetection:
+    """One table-tennis-ball prediction in source-frame coordinates."""
+
+    x: float
+    y: float
+    width: float
+    height: float
+    confidence: float
+
+
+@dataclass(frozen=True)
+class BallTrackPoint:
+    """A detected ball center and its smoothed pixel speed."""
+
+    frame_number: int
+    x: float
+    y: float
+    speed: float | None
+
+
 def validate_settings() -> None:
     """Check the input path and frame-range constants."""
+    load_dotenv()
     if not INPUT_VIDEO_PATH.is_file():
         raise FileNotFoundError(f"Input video not found: {INPUT_VIDEO_PATH}")
     if INPUT_VIDEO_PATH.resolve() == OUTPUT_VIDEO_PATH.resolve():
@@ -69,6 +117,14 @@ def validate_settings() -> None:
         raise ValueError("END_FRAME must be 0 or greater than or equal to START_FRAME.")
     if not 0.0 <= CONFIDENCE <= 1.0:
         raise ValueError("CONFIDENCE must be between 0 and 1.")
+    if not os.getenv(ROBOFLOW_API_KEY_ENV):
+        raise EnvironmentError(
+            f"Missing {ROBOFLOW_API_KEY_ENV}. Add it to the local .env file."
+        )
+    if not os.getenv(ROBOFLOW_MODEL_ID_ENV):
+        raise EnvironmentError(
+            f"Missing {ROBOFLOW_MODEL_ID_ENV}. Add it to the local .env file."
+        )
 
 
 def create_video_writer(
@@ -237,6 +293,226 @@ def calculated_scores(score: Score) -> tuple[int, int]:
     )
 
 
+def create_roboflow_client() -> InferenceHTTPClient:
+    """Create a configured client for the trained Roboflow ball model."""
+    api_key = os.environ[ROBOFLOW_API_KEY_ENV]
+    client = InferenceHTTPClient(api_url=ROBOFLOW_API_URL, api_key=api_key)
+    client.configure(InferenceConfiguration(confidence_threshold=BALL_CONFIDENCE))
+    return client
+
+
+def find_ball(
+    frame: np.ndarray,
+    client: InferenceHTTPClient,
+    model_id: str,
+    previous_frame: np.ndarray | None = None,
+    previous_point: BallTrackPoint | None = None,
+    frame_number: int | None = None,
+    prediction_cache: dict[str, list[dict[str, Any]]] | None = None,
+    cache_key: str | None = None,
+) -> BallDetection | None:
+    """Return the most plausible ball using confidence, motion, and continuity."""
+    if prediction_cache is not None and cache_key in prediction_cache:
+        response: Any = {"predictions": prediction_cache[cache_key]}
+    else:
+        response = client.infer(frame, model_id=model_id)
+    if isinstance(response, list):
+        response = response[0] if response else {}
+    if not isinstance(response, dict):
+        return None
+
+    predictions = response.get("predictions", [])
+    if prediction_cache is not None and cache_key is not None:
+        prediction_cache[cache_key] = [
+            prediction for prediction in predictions if isinstance(prediction, dict)
+        ]
+    if previous_frame is None:
+        # Motion is required to reject static logos, so do not seed a track from
+        # the first source frame when no comparison frame is available.
+        return None
+    height, width = frame.shape[:2]
+    valid_predictions: list[tuple[BallDetection, float]] = []
+    for prediction in predictions:
+        if not isinstance(prediction, dict):
+            continue
+        required_values = ("x", "y", "width", "height", "confidence")
+        if not all(key in prediction for key in required_values):
+            continue
+        if float(prediction["confidence"]) < BALL_CONFIDENCE:
+            continue
+
+        detection = BallDetection(
+            x=float(prediction["x"]),
+            y=float(prediction["y"]),
+            width=float(prediction["width"]),
+            height=float(prediction["height"]),
+            confidence=float(prediction["confidence"]),
+        )
+        if not width * BALL_MIN_X_RATIO <= detection.x <= width * BALL_MAX_X_RATIO:
+            continue
+        if not height * BALL_MIN_Y_RATIO <= detection.y <= height * BALL_MAX_Y_RATIO:
+            continue
+
+        motion_score = detection_motion_score(frame, previous_frame, detection)
+        if previous_frame is not None and motion_score < BALL_MIN_MOTION_SCORE:
+            continue
+        valid_predictions.append((detection, motion_score))
+
+    if not valid_predictions:
+        return None
+
+    if previous_point is not None and frame_number is not None:
+        frame_gap = frame_number - previous_point.frame_number
+        if 0 < frame_gap <= BALL_MAX_TRACKING_GAP_FRAMES:
+            maximum_distance = BALL_MAX_DISPLACEMENT_PX_PER_FRAME * frame_gap
+            nearby_predictions = [
+                (detection, motion_score)
+                for detection, motion_score in valid_predictions
+                if np.hypot(
+                    detection.x - previous_point.x,
+                    detection.y - previous_point.y,
+                )
+                <= maximum_distance
+            ]
+            if not nearby_predictions:
+                return None
+            valid_predictions = nearby_predictions
+
+    def prediction_score(item: tuple[BallDetection, float]) -> float:
+        detection, motion_score = item
+        motion_bonus = min(motion_score / 30.0, 1.0) * 0.35
+        return detection.confidence + motion_bonus
+
+    return max(valid_predictions, key=prediction_score)[0]
+
+
+def load_ball_prediction_cache() -> dict[str, list[dict[str, Any]]]:
+    """Load non-secret raw model predictions saved from earlier API calls."""
+    if not BALL_PREDICTION_CACHE_PATH.is_file():
+        return {}
+    try:
+        data = json.loads(BALL_PREDICTION_CACHE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_ball_prediction_cache(
+    prediction_cache: dict[str, list[dict[str, Any]]],
+) -> None:
+    """Save API predictions so rerunning analysis does not consume more requests."""
+    temporary_path = BALL_PREDICTION_CACHE_PATH.with_suffix(".tmp")
+    temporary_path.write_text(
+        json.dumps(prediction_cache, separators=(",", ":")), encoding="utf-8"
+    )
+    temporary_path.replace(BALL_PREDICTION_CACHE_PATH)
+
+
+def detection_motion_score(
+    frame: np.ndarray,
+    previous_frame: np.ndarray | None,
+    detection: BallDetection,
+) -> float:
+    """Measure local frame-to-frame change around a predicted tiny ball."""
+    if previous_frame is None or previous_frame.shape != frame.shape:
+        return 0.0
+
+    height, width = frame.shape[:2]
+    radius = max(12, round(max(detection.width, detection.height) * 1.5))
+    x1 = max(0, round(detection.x) - radius)
+    y1 = max(0, round(detection.y) - radius)
+    x2 = min(width, round(detection.x) + radius + 1)
+    y2 = min(height, round(detection.y) + radius + 1)
+    if x1 >= x2 or y1 >= y2:
+        return 0.0
+
+    current_patch = frame[y1:y2, x1:x2]
+    previous_patch = previous_frame[y1:y2, x1:x2]
+    difference = cv2.absdiff(current_patch, previous_patch)
+    return float(cv2.cvtColor(difference, cv2.COLOR_BGR2GRAY).mean())
+
+
+def calculate_ball_speed(
+    detection: BallDetection,
+    frame_number: int,
+    previous_point: BallTrackPoint | None,
+    fps: float,
+) -> float | None:
+    """Calculate ball speed in pixels/second between consecutive detections."""
+    if previous_point is None:
+        return None
+
+    frame_gap = frame_number - previous_point.frame_number
+    if frame_gap <= 0 or frame_gap > BALL_MAX_TRACKING_GAP_FRAMES:
+        return None
+
+    pixel_distance = float(
+        np.hypot(detection.x - previous_point.x, detection.y - previous_point.y)
+    )
+    speed = pixel_distance * fps / frame_gap
+    if speed > BALL_MAX_SPEED_PX_PER_SECOND:
+        return None
+    return speed
+
+
+def speed_color(speed: float | None) -> tuple[int, int, int]:
+    """Map slow-to-fast movement to blue-to-red BGR colors."""
+    if speed is None:
+        return 0, 255, 255
+    ratio = min(max(speed / BALL_FAST_SPEED_PX_PER_SECOND, 0.0), 1.0)
+    color_index = np.asarray([[round(ratio * 255)]], dtype=np.uint8)
+    color = cv2.applyColorMap(color_index, cv2.COLORMAP_TURBO)[0, 0]
+    return int(color[0]), int(color[1]), int(color[2])
+
+
+def draw_ball_tracking(
+    frame: np.ndarray,
+    detection: BallDetection | None,
+    trail: deque[BallTrackPoint],
+) -> None:
+    """Draw the current ball box, speed, and recent speed-colored trajectory."""
+    trail_points = list(trail)
+    for start, end in zip(trail_points, trail_points[1:]):
+        if end.frame_number - start.frame_number > BALL_MAX_TRACKING_GAP_FRAMES:
+            continue
+        cv2.line(
+            frame,
+            (round(start.x), round(start.y)),
+            (round(end.x), round(end.y)),
+            speed_color(end.speed),
+            3,
+            cv2.LINE_AA,
+        )
+
+    if detection is None or not trail:
+        return
+
+    current = trail[-1]
+    x1 = round(detection.x - detection.width / 2)
+    y1 = round(detection.y - detection.height / 2)
+    x2 = round(detection.x + detection.width / 2)
+    y2 = round(detection.y + detection.height / 2)
+    color = speed_color(current.speed)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
+    cv2.circle(frame, (round(detection.x), round(detection.y)), 5, color, -1)
+
+    speed_text = "speed: -- px/s"
+    if current.speed is not None:
+        speed_text = f"speed: {current.speed:.0f} px/s"
+    label = f"ball {detection.confidence:.2f} | {speed_text}"
+    text_y = max(24, y1 - 10)
+    cv2.putText(
+        frame,
+        label,
+        (max(0, x1), text_y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        color,
+        2,
+        cv2.LINE_AA,
+    )
+
+
 def create_heatmap(
     background_frame: np.ndarray,
     player1_positions: list[Position],
@@ -323,8 +599,45 @@ def create_score_chart(
     plt.close(figure)
 
 
-def analyze_video() -> tuple[int, int, int, int, int, int]:
-    """Create the annotated video, position CSV, heatmap, and score chart."""
+def create_ball_speed_chart(track_points: list[BallTrackPoint]) -> None:
+    """Save the detected ball's smoothed pixel speed over source frames."""
+    measured_points = [point for point in track_points if point.speed is not None]
+    figure, axis = plt.subplots(figsize=(12, 6))
+
+    if measured_points:
+        frame_numbers = [point.frame_number for point in measured_points]
+        speeds = [float(point.speed) for point in measured_points]
+        axis.plot(frame_numbers, speeds, color="tab:red", linewidth=1.8)
+        maximum_index = int(np.argmax(speeds))
+        axis.scatter(
+            [frame_numbers[maximum_index]],
+            [speeds[maximum_index]],
+            color="black",
+            zorder=3,
+            label=f"Fastest: {speeds[maximum_index]:.0f} px/s",
+        )
+        axis.legend()
+    else:
+        axis.text(
+            0.5,
+            0.5,
+            "Not enough consecutive ball detections to calculate speed",
+            ha="center",
+            va="center",
+            transform=axis.transAxes,
+        )
+
+    axis.set_title("Table-Tennis Ball Speed Over Time")
+    axis.set_xlabel("Source Frame")
+    axis.set_ylabel("Smoothed Speed (pixels/second)")
+    axis.grid(alpha=0.3)
+    figure.tight_layout()
+    figure.savefig(BALL_SPEED_CHART_PATH, dpi=160)
+    plt.close(figure)
+
+
+def analyze_video() -> tuple[int, int, int, int, int, int, int, int, float]:
+    """Create all annotated video, CSV, heatmap, score, and ball outputs."""
     capture = cv2.VideoCapture(str(INPUT_VIDEO_PATH))
     if not capture.isOpened():
         raise OSError(f"Could not open input video: {INPUT_VIDEO_PATH}")
@@ -347,6 +660,10 @@ def analyze_video() -> tuple[int, int, int, int, int, int]:
 
         writer = create_video_writer(OUTPUT_VIDEO_PATH, fps, (width, height))
         model = YOLO(MODEL_NAME)
+        roboflow_client = create_roboflow_client()
+        roboflow_model_id = os.environ[ROBOFLOW_MODEL_ID_ENV]
+        ball_prediction_cache = load_ball_prediction_cache()
+        cache_prefix = f"{INPUT_VIDEO_PATH.name}:{roboflow_model_id}:"
         score_reader = easyocr.Reader(
             ["en"],
             gpu=False,
@@ -368,9 +685,25 @@ def analyze_video() -> tuple[int, int, int, int, int, int]:
         score_frame_numbers: list[int] = []
         player1_scores: list[int] = []
         player2_scores: list[int] = []
+        ball_track_points: list[BallTrackPoint] = []
+        ball_trail: deque[BallTrackPoint] = deque(maxlen=BALL_TRAIL_LENGTH)
+        previous_ball_point: BallTrackPoint | None = None
+        recent_raw_speeds: deque[float] = deque(
+            maxlen=BALL_SPEED_SMOOTHING_WINDOW
+        )
+        ball_detection_frames = 0
+        ball_inference_requests = 0
+        ball_inference_failures = 0
+        previous_video_frame: np.ndarray | None = None
 
-        with POSITIONS_CSV_PATH.open("w", newline="", encoding="utf-8") as csv_file:
+        with (
+            POSITIONS_CSV_PATH.open("w", newline="", encoding="utf-8") as csv_file,
+            BALL_POSITIONS_CSV_PATH.open(
+                "w", newline="", encoding="utf-8"
+            ) as ball_csv_file,
+        ):
             csv_writer = csv.writer(csv_file)
+            ball_csv_writer = csv.writer(ball_csv_file)
             csv_writer.writerow(
                 [
                     "frame",
@@ -380,12 +713,23 @@ def analyze_video() -> tuple[int, int, int, int, int, int]:
                     "player2_position_y",
                 ]
             )
+            ball_csv_writer.writerow(
+                [
+                    "frame",
+                    "ball_position_x",
+                    "ball_position_y",
+                    "confidence",
+                    "speed_pixels_per_second",
+                ]
+            )
 
             while END_FRAME == 0 or frame_number <= END_FRAME:
                 success, frame = capture.read()
                 if not success:
                     break
 
+                comparison_frame = previous_video_frame
+                previous_video_frame = frame.copy()
                 current_frame_number = frame_number
                 frame_number += 1
                 inspected_frames += 1
@@ -414,6 +758,84 @@ def analyze_video() -> tuple[int, int, int, int, int, int]:
 
                 if background_frame is None:
                     background_frame = frame.copy()
+
+                ball_inference_requests += 1
+                try:
+                    ball_detection = find_ball(
+                        frame,
+                        roboflow_client,
+                        roboflow_model_id,
+                        previous_frame=comparison_frame,
+                        previous_point=previous_ball_point,
+                        frame_number=current_frame_number,
+                        prediction_cache=ball_prediction_cache,
+                        cache_key=f"{cache_prefix}{current_frame_number}",
+                    )
+                except Exception as error:
+                    ball_inference_failures += 1
+                    if ball_inference_requests == 1:
+                        raise RuntimeError(
+                            "The first Roboflow inference request failed. Check the "
+                            "API key, model ID, internet connection, and deployment status."
+                        ) from None
+                    if ball_inference_failures <= 3:
+                        print(
+                            f"Roboflow inference failed on frame "
+                            f"{current_frame_number} ({type(error).__name__})."
+                        )
+                    ball_detection = None
+
+                if ball_detection is not None:
+                    raw_speed = calculate_ball_speed(
+                        ball_detection,
+                        current_frame_number,
+                        previous_ball_point,
+                        fps,
+                    )
+                    if raw_speed is None:
+                        recent_raw_speeds.clear()
+                        smoothed_speed = None
+                    else:
+                        recent_raw_speeds.append(raw_speed)
+                        smoothed_speed = float(np.median(recent_raw_speeds))
+
+                    if (
+                        previous_ball_point is not None
+                        and current_frame_number - previous_ball_point.frame_number
+                        > BALL_MAX_TRACKING_GAP_FRAMES
+                    ):
+                        ball_trail.clear()
+
+                    current_ball_point = BallTrackPoint(
+                        frame_number=current_frame_number,
+                        x=ball_detection.x,
+                        y=ball_detection.y,
+                        speed=smoothed_speed,
+                    )
+                    ball_track_points.append(current_ball_point)
+                    ball_trail.append(current_ball_point)
+                    previous_ball_point = current_ball_point
+                    ball_detection_frames += 1
+                    ball_csv_writer.writerow(
+                        [
+                            current_frame_number,
+                            round(ball_detection.x, 2),
+                            round(ball_detection.y, 2),
+                            round(ball_detection.confidence, 4),
+                            ""
+                            if smoothed_speed is None
+                            else round(smoothed_speed, 2),
+                        ]
+                    )
+                else:
+                    if (
+                        previous_ball_point is not None
+                        and current_frame_number - previous_ball_point.frame_number
+                        > BALL_MAX_TRACKING_GAP_FRAMES
+                    ):
+                        ball_trail.clear()
+                        recent_raw_speeds.clear()
+                    ball_csv_writer.writerow([current_frame_number, "", "", "", ""])
 
                 player1, player2 = find_player_positions(result)
 
@@ -448,11 +870,13 @@ def analyze_video() -> tuple[int, int, int, int, int, int]:
                     kpt_radius=5,
                     line_width=2,
                 )
+                draw_ball_tracking(annotated_frame, ball_detection, ball_trail)
                 writer.write(annotated_frame)
 
                 written_frames += 1
 
                 if inspected_frames % 25 == 0:
+                    save_ball_prediction_cache(ball_prediction_cache)
                     print(
                         f"Inspected {inspected_frames} frame(s); "
                         f"kept {written_frames}."
@@ -463,6 +887,13 @@ def analyze_video() -> tuple[int, int, int, int, int, int]:
 
         create_heatmap(background_frame, player1_positions, player2_positions)
         create_score_chart(score_frame_numbers, player1_scores, player2_scores)
+        create_ball_speed_chart(ball_track_points)
+        save_ball_prediction_cache(ball_prediction_cache)
+        measured_speeds = [
+            float(point.speed)
+            for point in ball_track_points
+            if point.speed is not None
+        ]
         return (
             inspected_frames,
             written_frames,
@@ -470,6 +901,9 @@ def analyze_video() -> tuple[int, int, int, int, int, int]:
             len(player1_positions),
             missing_position_frames,
             recognized_score_samples,
+            ball_detection_frames,
+            ball_inference_failures,
+            max(measured_speeds, default=0.0),
         )
     finally:
         capture.release()
@@ -487,6 +921,9 @@ def main() -> None:
         position_frames,
         missing_position_frames,
         recognized_score_samples,
+        ball_detection_frames,
+        ball_inference_failures,
+        fastest_ball_speed,
     ) = analyze_video()
 
     if written_frames == 0:
@@ -498,10 +935,17 @@ def main() -> None:
     if missing_position_frames:
         print(f"Missing two-player detections in {missing_position_frames} frame(s).")
     print(f"Recognized the scoreboard in {recognized_score_samples} OCR sample(s).")
+    print(f"Detected the ball in {ball_detection_frames} valid frame(s).")
+    if ball_inference_failures:
+        print(f"Roboflow inference failed in {ball_inference_failures} frame(s).")
+    if fastest_ball_speed > 0:
+        print(f"Fastest measured ball speed: {fastest_ball_speed:.0f} px/s.")
     print(f"Saved annotated video to: {OUTPUT_VIDEO_PATH.resolve()}")
     print(f"Saved player positions to: {POSITIONS_CSV_PATH.resolve()}")
     print(f"Saved player heatmap to: {HEATMAP_PATH.resolve()}")
     print(f"Saved score chart to: {SCORE_CHART_PATH.resolve()}")
+    print(f"Saved ball positions to: {BALL_POSITIONS_CSV_PATH.resolve()}")
+    print(f"Saved ball speed chart to: {BALL_SPEED_CHART_PATH.resolve()}")
 
 
 if __name__ == "__main__":

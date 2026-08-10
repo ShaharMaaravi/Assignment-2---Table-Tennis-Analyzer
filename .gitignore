@@ -13,7 +13,12 @@ output_with_detections.*
 player_positions.csv
 player_position_heatmap.png
 score_over_time.png
+ball_positions.csv
+ball_speed_over_time.png
+.roboflow_prediction_cache.json
 runs/
+roboflow_ball_dataset/
+.matplotlib-cache/
 
 # Environment variables and local secrets
 .env
