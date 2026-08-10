@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Interactive table-tennis match intelligence dashboard with pose, ball, rally, score, and momentum analysis.">
+  <title>RallyIQ · Table Tennis Match Intelligence</title>
+  <style>
+    :root {
+      --bg: #070b12;
+      --bg-soft: #0a101a;
+      --panel: rgba(15, 23, 36, 0.92);
+      --panel-strong: #111b2a;
+      --line: rgba(163, 186, 215, 0.16);
+      --text: #f3f7fb;
+      --muted: #91a2b7;
+      --cyan: #4ce6c3;
+      --cyan-soft: rgba(76, 230, 195, 0.14);
+      --amber: #ffcc66;
+      --blue: #5d8cff;
+      --danger: #ff6b78;
+      --radius: 22px;
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+      --content: min(1440px, calc(100% - 40px));
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 8% 8%, rgba(76, 230, 195, 0.10), transparent 24rem),
+        radial-gradient(circle at 92% 18%, rgba(93, 140, 255, 0.12), transparent 28rem),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; }
+    :focus-visible { outline: 3px solid var(--cyan); outline-offset: 3px; }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid var(--line);
+      background: rgba(7, 11, 18, 0.82);
+      backdrop-filter: blur(18px);
+    }
+
+    .nav {
+      width: var(--content);
+      min-height: 68px;
+      margin: auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1.08rem;
+      font-weight: 850;
+      letter-spacing: 0.04em;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(76, 230, 195, 0.5);
+      border-radius: 10px;
+      background: var(--cyan-soft);
+      color: var(--cyan);
+      font-size: 0.74rem;
+    }
+
+    .brand span { color: var(--cyan); }
+    .nav-links { display: flex; align-items: center; gap: 28px; }
+    .nav-links a { color: var(--muted); font-size: 0.9rem; font-weight: 650; }
+    .nav-links a:hover { color: var(--text); }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 16px var(--cyan);
+    }
+
+    main { width: var(--content); margin: auto; }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 82px 0 54px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      width: min(580px, 56vw);
+      height: 260px;
+      right: -110px;
+      top: 42px;
+      border: 1px solid rgba(76, 230, 195, 0.14);
+      border-radius: 18px;
+      transform: perspective(500px) rotateX(58deg) rotateZ(-8deg);
+      box-shadow: inset 0 0 80px rgba(76, 230, 195, 0.04);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      margin: 0 0 16px;
+      color: var(--cyan);
+      font-size: 0.76rem;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 830px;
+      margin: 0;
+      font-size: clamp(2.7rem, 7vw, 6.4rem);
+      line-height: 0.96;
+      letter-spacing: -0.065em;
+    }
+
+    h1 em { color: var(--cyan); font-style: normal; }
+    .hero-copy {
+      max-width: 690px;
+      margin: 24px 0 0;
+      color: var(--muted);
+      font-size: clamp(1rem, 1.7vw, 1.18rem);
+    }
+
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+    .button {
+      min-height: 46px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 18px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
+      font-size: 0.9rem;
+      font-weight: 750;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .button:hover { transform: translateY(-2px); border-color: rgba(76, 230, 195, 0.5); }
+    .button.primary { background: var(--cyan); color: #04110e; border-color: var(--cyan); }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 34px; color: var(--muted); font-size: 0.82rem; }
+    .hero-meta strong { color: var(--text); }
+
+    section { padding: 64px 0; }
+    .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+    .section-heading h2 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.5rem); letter-spacing: -0.035em; }
+    .section-heading p { max-width: 620px; margin: 8px 0 0; color: var(--muted); }
+
+    .metrics-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }
+    .metric {
+      min-height: 154px;
+      padding: 21px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(145deg, rgba(17, 27, 42, 0.95), rgba(10, 16, 26, 0.9));
+      box-shadow: 0 16px 34px rgba(0, 0, 0, 0.16);
+    }
+
+    .metric-label { color: var(--muted); font-size: 0.76rem; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
+    .metric-value { margin-top: 16px; font-size: clamp(1.65rem, 2.8vw, 2.35rem); font-weight: 850; letter-spacing: -0.045em; }
+    .metric-note { margin-top: 7px; color: var(--muted); font-size: 0.78rem; }
+    .metric.accent { border-color: rgba(76, 230, 195, 0.34); background: linear-gradient(145deg, rgba(21, 60, 58, 0.65), rgba(10, 20, 28, 0.92)); }
+    .metric.accent .metric-value { color: var(--cyan); }
+
+    .media-grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
+    .card {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .card-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
+    .card-kicker { color: var(--cyan); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
+    .card-title { margin: 4px 0 0; font-size: 1rem; }
+    .card-badge { padding: 6px 9px; border-radius: 999px; background: var(--cyan-soft); color: var(--cyan); font-size: 0.72rem; font-weight: 750; white-space: nowrap; }
+    .video-wrap { aspect-ratio: 16 / 9; background: #000; }
+    video { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .video-note { padding: 14px 18px 18px; color: var(--muted); font-size: 0.82rem; }
+
+    .timeline-shell { padding: 18px; border-top: 1px solid var(--line); background: rgba(5, 10, 17, 0.72); }
+    .timeline-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
+    .timeline-heading h4 { margin: 0; font-size: 1rem; }
+    .timeline-heading p { max-width: 560px; margin: 0; color: var(--muted); font-size: 0.78rem; }
+    .timeline-live-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+    .live-stat { min-width: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255, 255, 255, 0.025); }
+    .live-label { display: block; color: var(--muted); font-size: 0.62rem; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; }
+    .live-value { display: block; overflow: hidden; margin-top: 5px; color: var(--text); font-size: 0.8rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .live-stat.primary .live-value { color: var(--cyan); }
+    .timeline-canvas-wrap { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: #090f18; cursor: crosshair; touch-action: none; }
+    #match-timeline { display: block; width: 100%; height: 168px; }
+    .timeline-scrubber { width: 100%; height: 26px; margin: 8px 0 0; accent-color: var(--cyan); cursor: pointer; }
+    .timeline-legend { display: flex; flex-wrap: wrap; gap: 10px 18px; color: var(--muted); font-size: 0.72rem; }
+    .legend-item { display: inline-flex; align-items: center; gap: 7px; }
+    .legend-swatch { width: 18px; height: 3px; border-radius: 999px; background: var(--cyan); }
+    .legend-swatch.player-two { background: var(--blue); }
+    .legend-swatch.speed { background: var(--amber); }
+    .legend-swatch.rally { height: 10px; background: rgba(76, 230, 195, 0.2); border: 1px solid rgba(76, 230, 195, 0.42); }
+
+    .chart-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 18px; }
+    .chart-tabs { display: flex; flex-direction: column; gap: 8px; }
+    .chart-tab {
+      width: 100%;
+      padding: 14px 15px;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .chart-tab:hover { color: var(--text); background: rgba(255,255,255,0.035); }
+    .chart-tab[aria-pressed="true"] { color: var(--text); border-color: rgba(76, 230, 195, 0.32); background: var(--cyan-soft); }
+    .chart-panel { min-width: 0; }
+    .chart-frame { min-height: 420px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: #f7f8fa; }
+    .chart-frame img { display: block; width: 100%; max-height: 720px; object-fit: contain; transition: opacity 140ms ease, transform 140ms ease; }
+    .chart-frame img.is-switching { opacity: 0; transform: scale(0.99); }
+    .chart-meta { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; color: var(--muted); font-size: 0.82rem; }
+
+    .data-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr); gap: 18px; }
+    .table-card { overflow: hidden; }
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 780px; }
+    th, td { padding: 15px 17px; border-bottom: 1px solid var(--line); text-align: left; font-size: 0.84rem; white-space: nowrap; }
+    th { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    tbody tr:hover { background: rgba(255,255,255,0.025); }
+    .rally-pill { display: inline-flex; padding: 5px 8px; border-radius: 8px; background: var(--cyan-soft); color: var(--cyan); font-weight: 800; }
+    .empty-state { color: var(--muted); text-align: center; padding: 32px; }
+
+    .download-list { display: grid; gap: 8px; padding: 16px; }
+    .download-item { display: flex; justify-content: space-between; gap: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,0.02); }
+    .download-item:hover { border-color: rgba(76, 230, 195, 0.42); }
+    .download-name { font-size: 0.86rem; font-weight: 700; }
+    .download-type { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; }
+
+    .methodology { margin-top: 18px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,0.02); }
+    .methodology summary { padding: 17px 19px; cursor: pointer; font-weight: 750; }
+    .methodology-content { padding: 0 19px 18px; color: var(--muted); font-size: 0.88rem; }
+    .methodology-content strong { color: var(--text); }
+
+    footer { width: var(--content); margin: 0 auto; padding: 30px 0 42px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.8rem; display: flex; justify-content: space-between; gap: 20px; }
+
+    @media (max-width: 1160px) {
+      .metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .media-grid, .data-grid { grid-template-columns: 1fr; }
+      .timeline-live-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 780px) {
+      :root { --content: min(100% - 24px, 1440px); --radius: 17px; }
+      .nav { min-height: 60px; }
+      .nav-links { display: none; }
+      .status { padding: 7px 9px; }
+      .hero { padding: 56px 0 40px; }
+      .hero::after { opacity: 0.45; }
+      .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metric { min-height: 132px; padding: 17px; }
+      section { padding: 44px 0; }
+      .section-heading { align-items: start; flex-direction: column; }
+      .media-grid { grid-template-columns: 1fr; }
+      .chart-layout { grid-template-columns: 1fr; }
+      .chart-tabs { flex-direction: row; overflow-x: auto; padding-bottom: 5px; }
+      .chart-tab { width: auto; flex: 0 0 auto; white-space: nowrap; }
+      .chart-frame { min-height: 260px; }
+      .chart-meta { align-items: start; flex-direction: column; }
+      .timeline-heading { align-items: start; flex-direction: column; }
+      #match-timeline { height: 145px; }
+      footer { flex-direction: column; }
+    }
+
+    @media (max-width: 460px) {
+      .brand-word { display: none; }
+      .status-label { display: none; }
+      .metrics-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+      .metric-value { font-size: 1.55rem; }
+      .hero-actions .button { width: 100%; }
+      .card-header { align-items: flex-start; }
+      .timeline-shell { padding: 13px; }
+      .timeline-live-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      #match-timeline { height: 125px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav" aria-label="Dashboard navigation">
+      <a class="brand" href="#top" aria-label="RallyIQ dashboard home">
+        <span class="brand-mark">RIQ</span>
+        <span class="brand-word">RALLY<span>IQ</span></span>
+      </a>
+      <div class="nav-links">
+        <a href="#overview">Overview</a>
+        <a href="#playback">Playback</a>
+        <a href="#insights">Insights</a>
+        <a href="#data">Data</a>
+      </div>
+      <div class="status"><span class="status-dot"></span><span class="status-label">Analysis ready</span></div>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero" aria-labelledby="dashboard-title">
+      <p class="eyebrow">Computer vision · Match intelligence</p>
+      <h1 id="dashboard-title">See the match.<br><em>Read the momentum.</em></h1>
+      <p class="hero-copy">One view for pose tracking, player movement, ball trajectory, rally intensity, highlights, score state, and explainable momentum.</p>
+      <div class="hero-actions">
+        <a class="button primary" href="#playback">Watch analysis</a>
+        <a class="button" href="match_highlights.mp4" download>Download highlights</a>
+      </div>
+      <div class="hero-meta">
+        <span><strong>Frame range</strong> 0–200</span>
+        <span><strong>Models</strong> YOLO Pose + RF-DETR</span>
+        <span><strong>Best sequence</strong> Rally 1 · 13.2 score</span>
+      </div>
+    </section>
+
+    <section id="overview" aria-labelledby="overview-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">Match snapshot</p><h2 id="overview-title">The signal at a glance</h2></div>
+        <p>Metrics are calculated from valid broadcast frames only. Speeds and travel distances use image-plane pixels.</p>
+      </div>
+      <div class="metrics-grid">
+        <article class="metric"><div class="metric-label">Valid frames</div><div class="metric-value">200</div><div class="metric-note">1 camera cut skipped</div></article>
+        <article class="metric accent"><div class="metric-label">Ball detections</div><div class="metric-value">82</div><div class="metric-note">41.0% of valid frames</div></article>
+        <article class="metric"><div class="metric-label">Rallies</div><div class="metric-value">1</div><div class="metric-note">gap-stabilized sequences</div></article>
+        <article class="metric"><div class="metric-label">Estimated hits</div><div class="metric-value">~4</div><div class="metric-note">direction-reversal estimate</div></article>
+        <article class="metric"><div class="metric-label">Fastest ball</div><div class="metric-value">1687</div><div class="metric-note">pixels per second</div></article>
+        <article class="metric"><div class="metric-label">Momentum swing</div><div class="metric-value">19.6</div><div class="metric-note">point spread · heuristic</div></article>
+      </div>
+    </section>
+
+    <section id="playback" aria-labelledby="playback-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">Playback</p><h2 id="playback-title">Analysis in motion</h2></div>
+        <p>Follow player poses, the speed-colored ball trail, live rally identification, and estimated contact count.</p>
+      </div>
+      <div class="media-grid">
+        <article class="card">
+          <div class="card-header"><div><div class="card-kicker">Full analysis</div><h3 class="card-title">Annotated match segment</h3></div><span class="card-badge">200 frames</span></div>
+          <div class="video-wrap"><video id="analysis-video" controls playsinline preload="metadata"><source src="output_with_detections.mp4" type="video/mp4">Your browser does not support MP4 playback.</video></div>
+          <div class="timeline-shell">
+            <div class="timeline-heading">
+              <h4>Interactive match timeline</h4>
+              <p>Play, scrub, or click the graph. The readouts stay synchronized with the processed-video frame.</p>
+            </div>
+            <div class="timeline-live-grid" aria-live="polite">
+              <div class="live-stat primary"><span class="live-label">Source frame</span><span class="live-value" id="timeline-frame">—</span></div>
+              <div class="live-stat"><span class="live-label">Rally / hits</span><span class="live-value" id="timeline-rally">—</span></div>
+              <div class="live-stat"><span class="live-label">Ball speed</span><span class="live-value" id="timeline-speed">—</span></div>
+              <div class="live-stat"><span class="live-label">Momentum</span><span class="live-value" id="timeline-momentum">—</span></div>
+              <div class="live-stat"><span class="live-label">Score</span><span class="live-value" id="timeline-score">—</span></div>
+              <div class="live-stat"><span class="live-label">Tracked positions</span><span class="live-value" id="timeline-positions">—</span></div>
+            </div>
+            <div class="timeline-canvas-wrap" id="timeline-canvas-wrap" title="Click to seek">
+              <canvas id="match-timeline" aria-label="Synchronized chart showing player momentum, ball speed, rally spans, and the current video position"></canvas>
+            </div>
+            <input class="timeline-scrubber" id="timeline-scrubber" type="range" min="0" value="0" step="1" aria-label="Seek through processed video frames">
+            <div class="timeline-legend" aria-label="Timeline legend">
+              <span class="legend-item"><span class="legend-swatch"></span>Player 1 momentum</span>
+              <span class="legend-item"><span class="legend-swatch player-two"></span>Player 2 momentum</span>
+              <span class="legend-item"><span class="legend-swatch speed"></span>Ball speed</span>
+              <span class="legend-item"><span class="legend-swatch rally"></span>Detected rally</span>
+            </div>
+          </div>
+          <div class="video-note">Pose skeletons, player boxes, ball confidence, speed trail, and rally intelligence are rendered directly into the video.</div>
+        </article>
+        <article class="card">
+          <div class="card-header"><div><div class="card-kicker">Auto-curated</div><h3 class="card-title">Top rally highlights</h3></div><span class="card-badge">1 selected</span></div>
+          <div class="video-wrap"><video controls playsinline preload="metadata"><source src="match_highlights.mp4" type="video/mp4">Your browser does not support MP4 playback.</video></div>
+          <div class="video-note">Rallies are ranked by duration, estimated hits, peak speed, and combined player movement.</div>
+        </article>
+      </div>
+    </section>
+
+    <section id="insights" aria-labelledby="insights-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">Visual intelligence</p><h2 id="insights-title">Explore every analytical layer</h2></div>
+        <p>Switch between charts without leaving the dashboard. Each image can also be downloaded at full resolution.</p>
+      </div>
+      <div class="chart-layout">
+        <div class="chart-tabs" role="group" aria-label="Select analysis chart">
+          <button class="chart-tab" type="button" aria-pressed="true" data-src="match_momentum.png" data-title="Match momentum" data-alt="Two-line explainable momentum timeline for both players">Momentum</button>
+          <button class="chart-tab" type="button" aria-pressed="false" data-src="player_position_heatmap.png" data-title="Player position density" data-alt="Court image with combined player position density heatmap">Player heatmap</button>
+          <button class="chart-tab" type="button" aria-pressed="false" data-src="ball_speed_over_time.png" data-title="Ball speed over time" data-alt="Line chart of smoothed table-tennis ball speed over source frames">Ball speed</button>
+          <button class="chart-tab" type="button" aria-pressed="false" data-src="rally_analysis.png" data-title="Smart rally analysis" data-alt="Rally comparison dashboard for duration, hits, speed, and excitement">Rally analysis</button>
+          <button class="chart-tab" type="button" aria-pressed="false" data-src="score_over_time.png" data-title="Score progression" data-alt="Player calculated score progression over source frames">Score</button>
+        </div>
+        <div class="chart-panel">
+          <div class="chart-frame"><img id="active-chart" src="match_momentum.png" alt="Two-line explainable momentum timeline for both players"></div>
+          <div class="chart-meta"><span id="chart-caption" aria-live="polite">Match momentum</span><a id="chart-download" class="button" href="match_momentum.png" download>Download chart</a></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="data" aria-labelledby="data-title">
+      <div class="section-heading">
+        <div><p class="eyebrow">Structured data</p><h2 id="data-title">Rally table & exports</h2></div>
+        <p>Use the CSV exports for your report, additional charts, or future model experiments.</p>
+      </div>
+      <div class="data-grid">
+        <article class="card table-card">
+          <div class="card-header"><div><div class="card-kicker">Rally ranking</div><h3 class="card-title">Detected sequences</h3></div><span class="card-badge">1 total</span></div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Rally</th><th>Frames</th><th>Duration</th><th>Hits</th><th>Average speed</th><th>Peak speed</th><th>Excitement</th></tr></thead>
+              <tbody>
+              <tr>
+                <td><span class="rally-pill">R1</span></td>
+                <td>92–198</td>
+                <td>2.14s</td>
+                <td>~4</td>
+                <td>1050 px/s</td>
+                <td>1687 px/s</td>
+                <td>13.2</td>
+              </tr></tbody>
+            </table>
+          </div>
+        </article>
+        <aside class="card">
+          <div class="card-header"><div><div class="card-kicker">Exports</div><h3 class="card-title">Download datasets</h3></div></div>
+          <div class="download-list">
+            <a class="download-item" href="player_positions.csv" download><span class="download-name">Player positions</span><span class="download-type">CSV</span></a>
+            <a class="download-item" href="ball_positions.csv" download><span class="download-name">Ball tracking</span><span class="download-type">CSV</span></a>
+            <a class="download-item" href="rally_statistics.csv" download><span class="download-name">Rally statistics</span><span class="download-type">CSV</span></a>
+            <a class="download-item" href="match_momentum.csv" download><span class="download-name">Momentum components</span><span class="download-type">CSV</span></a>
+          </div>
+        </aside>
+      </div>
+
+      <details class="methodology">
+        <summary>How should these metrics be interpreted?</summary>
+        <div class="methodology-content">
+          <p><strong>Ball speed</strong> is measured in pixels per second, not km/h. Real-world speed requires camera calibration and court-plane perspective correction.</p>
+          <p><strong>Estimated hits</strong> use stable horizontal ball-direction reversals and should be treated as an approximation when detections are missed.</p>
+          <p><strong>Momentum</strong> combines ball direction and speed, rally duration, movement efficiency, and available score state. It is an explainable analytical index—not win probability.</p>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <footer><span>RallyIQ · Table Tennis Analyzer</span><span>Generated from 201 source frames · local analysis dashboard</span></footer>
+
+  <script>
+    const timelineData = [{"f":0,"bx":null,"by":null,"bs":null,"p1":[531.11,566.65],"p2":[1311.63,545.29],"m1":50.0,"m2":50.0,"r":0,"h":0,"s1":null,"s2":null},{"f":1,"bx":null,"by":null,"bs":null,"p1":[531.19,567.02],"p2":[1311.44,545.19],"m1":49.98,"m2":50.02,"r":0,"h":0,"s1":null,"s2":null},{"f":2,"bx":null,"by":null,"bs":null,"p1":[531.86,567.45],"p2":[1311.32,545.22],"m1":49.92,"m2":50.08,"r":0,"h":0,"s1":null,"s2":null},{"f":3,"bx":null,"by":null,"bs":null,"p1":[531.91,568.04],"p2":[1311.3,545.05],"m1":49.9,"m2":50.1,"r":0,"h":0,"s1":null,"s2":null},{"f":4,"bx":null,"by":null,"bs":null,"p1":[531.77,568.16],"p2":[1311.15,545.1],"m1":49.91,"m2":50.09,"r":0,"h":0,"s1":null,"s2":null},{"f":5,"bx":null,"by":null,"bs":null,"p1":[531.18,568.38],"p2":[1311.1,544.96],"m1":49.87,"m2":50.13,"r":0,"h":0,"s1":null,"s2":null},{"f":6,"bx":null,"by":null,"bs":null,"p1":[531.19,568.48],"p2":[1310.95,544.88],"m1":49.9,"m2":50.1,"r":0,"h":0,"s1":null,"s2":null},{"f":7,"bx":null,"by":null,"bs":null,"p1":[531.13,568.78],"p2":[1310.92,544.68],"m1":49.9,"m2":50.1,"r":0,"h":0,"s1":null,"s2":null},{"f":8,"bx":null,"by":null,"bs":null,"p1":[530.81,568.51],"p2":[1310.77,544.66],"m1":49.89,"m2":50.11,"r":0,"h":0,"s1":null,"s2":null},{"f":9,"bx":null,"by":null,"bs":null,"p1":[531.32,569.17],"p2":[1310.73,544.23],"m1":49.87,"m2":50.13,"r":0,"h":0,"s1":null,"s2":null},{"f":10,"bx":null,"by":null,"bs":null,"p1":[531.63,569.21],"p2":[1310.63,544.03],"m1":49.88,"m2":50.12,"r":0,"h":0,"s1":null,"s2":null},{"f":11,"bx":null,"by":null,"bs":null,"p1":[531.56,569.37],"p2":[1310.85,543.78],"m1":49.91,"m2":50.09,"r":0,"h":0,"s1":null,"s2":null},{"f":12,"bx":null,"by":null,"bs":null,"p1":[531.29,568.97],"p2":[1311.01,543.38],"m1":49.92,"m2":50.08,"r":0,"h":0,"s1":null,"s2":null},{"f":13,"bx":null,"by":null,"bs":null,"p1":[531.66,569.74],"p2":[1311.26,543.23],"m1":49.88,"m2":50.12,"r":0,"h":0,"s1":null,"s2":null},{"f":14,"bx":null,"by":null,"bs":null,"p1":[531.78,569.55],"p2":[1311.07,542.8],"m1":49.92,"m2":50.08,"r":0,"h":0,"s1":null,"s2":null},{"f":15,"bx":null,"by":null,"bs":null,"p1":[531.8,570.03],"p2":[1310.99,542.42],"m1":49.92,"m2":50.08,"r":0,"h":0,"s1":null,"s2":null},{"f":16,"bx":null,"by":null,"bs":null,"p1":[531.99,570.0],"p2":[1311.16,542.19],"m1":49.94,"m2":50.06,"r":0,"h":0,"s1":null,"s2":null},{"f":17,"bx":null,"by":null,"bs":null,"p1":[531.82,570.19],"p2":[1311.15,541.14],"m1":50.02,"m2":49.98,"r":0,"h":0,"s1":null,"s2":null},{"f":18,"bx":null,"by":null,"bs":null,"p1":[532.1,570.37],"p2":[1311.45,540.35],"m1":50.07,"m2":49.93,"r":0,"h":0,"s1":null,"s2":null},{"f":19,"bx":null,"by":null,"bs":null,"p1":[532.01,570.37],"p2":[1311.94,538.85],"m1":50.2,"m2":49.8,"r":0,"h":0,"s1":null,"s2":null},{"f":20,"bx":null,"by":null,"bs":null,"p1":[532.22,570.28],"p2":[1311.76,537.79],"m1":50.25,"m2":49.75,"r":0,"h":0,"s1":null,"s2":null},{"f":21,"bx":null,"by":null,"bs":null,"p1":[531.99,570.17],"p2":[1312.19,537.02],"m1":50.27,"m2":49.73,"r":0,"h":0,"s1":null,"s2":null},{"f":22,"bx":null,"by":null,"bs":null,"p1":[532.27,570.17],"p2":[1312.18,535.5],"m1":50.35,"m2":49.65,"r":0,"h":0,"s1":null,"s2":null},{"f":23,"bx":null,"by":null,"bs":null,"p1":[531.94,570.06],"p2":[1312.31,534.43],"m1":50.37,"m2":49.63,"r":0,"h":0,"s1":null,"s2":null},{"f":24,"bx":null,"by":null,"bs":null,"p1":[532.23,570.1],"p2":[1312.71,533.69],"m1":50.37,"m2":49.63,"r":0,"h":0,"s1":null,"s2":null},{"f":25,"bx":null,"by":null,"bs":null,"p1":[532.04,570.01],"p2":[1313.82,532.37],"m1":50.46,"m2":49.54,"r":0,"h":0,"s1":null,"s2":null},{"f":26,"bx":null,"by":null,"bs":null,"p1":[532.31,569.98],"p2":[1314.52,531.75],"m1":50.46,"m2":49.54,"r":0,"h":0,"s1":null,"s2":null},{"f":27,"bx":null,"by":null,"bs":null,"p1":[532.02,570.04],"p2":[1315.04,531.52],"m1":50.42,"m2":49.58,"r":0,"h":0,"s1":null,"s2":null},{"f":28,"bx":null,"by":null,"bs":null,"p1":[532.38,570.0],"p2":[1315.41,531.36],"m1":50.36,"m2":49.64,"r":0,"h":0,"s1":null,"s2":null},{"f":29,"bx":null,"by":null,"bs":null,"p1":[532.3,569.98],"p2":[1314.62,531.66],"m1":50.38,"m2":49.62,"r":0,"h":0,"s1":null,"s2":null},{"f":30,"bx":null,"by":null,"bs":null,"p1":[532.86,570.0],"p2":[1316.48,530.58],"m1":50.48,"m2":49.52,"r":0,"h":0,"s1":null,"s2":null},{"f":31,"bx":null,"by":null,"bs":null,"p1":[532.39,569.9],"p2":[1317.8,530.11],"m1":50.5,"m2":49.5,"r":0,"h":0,"s1":null,"s2":null},{"f":32,"bx":null,"by":null,"bs":null,"p1":[532.51,570.0],"p2":[1317.69,529.22],"m1":50.5,"m2":49.5,"r":0,"h":0,"s1":null,"s2":null},{"f":33,"bx":null,"by":null,"bs":null,"p1":[532.03,569.81],"p2":[1317.04,527.95],"m1":50.51,"m2":49.49,"r":0,"h":0,"s1":null,"s2":null},{"f":34,"bx":null,"by":null,"bs":null,"p1":[532.24,569.92],"p2":[1314.21,527.04],"m1":50.69,"m2":49.31,"r":0,"h":0,"s1":null,"s2":null},{"f":35,"bx":null,"by":null,"bs":null,"p1":[532.3,569.89],"p2":[1313.7,525.43],"m1":50.75,"m2":49.25,"r":0,"h":0,"s1":null,"s2":null},{"f":36,"bx":null,"by":null,"bs":null,"p1":[532.03,569.97],"p2":[1313.92,523.83],"m1":50.77,"m2":49.23,"r":0,"h":0,"s1":null,"s2":null},{"f":37,"bx":null,"by":null,"bs":null,"p1":[532.04,570.05],"p2":[1316.05,521.66],"m1":50.94,"m2":49.06,"r":0,"h":0,"s1":null,"s2":null},{"f":38,"bx":null,"by":null,"bs":null,"p1":[532.03,570.09],"p2":[1315.2,519.72],"m1":51.0,"m2":49.0,"r":0,"h":0,"s1":null,"s2":null},{"f":39,"bx":null,"by":null,"bs":null,"p1":[532.1,569.84],"p2":[1316.09,517.39],"m1":51.07,"m2":48.93,"r":0,"h":0,"s1":null,"s2":null},{"f":40,"bx":null,"by":null,"bs":null,"p1":[532.06,569.77],"p2":[1315.32,515.98],"m1":51.06,"m2":48.94,"r":0,"h":0,"s1":null,"s2":null},{"f":41,"bx":null,"by":null,"bs":null,"p1":[532.35,569.09],"p2":[1316.06,513.54],"m1":51.08,"m2":48.92,"r":0,"h":0,"s1":null,"s2":null},{"f":42,"bx":null,"by":null,"bs":null,"p1":[532.39,568.77],"p2":[1315.11,511.76],"m1":51.09,"m2":48.91,"r":0,"h":0,"s1":null,"s2":null},{"f":43,"bx":null,"by":null,"bs":null,"p1":[532.62,568.53],"p2":[1316.34,509.92],"m1":51.11,"m2":48.89,"r":0,"h":0,"s1":null,"s2":null},{"f":44,"bx":null,"by":null,"bs":null,"p1":[533.05,568.44],"p2":[1315.85,508.06],"m1":51.09,"m2":48.91,"r":0,"h":0,"s1":null,"s2":null},{"f":45,"bx":null,"by":null,"bs":null,"p1":[533.08,568.05],"p2":[1316.62,508.08],"m1":50.98,"m2":49.02,"r":0,"h":0,"s1":null,"s2":null},{"f":46,"bx":null,"by":null,"bs":null,"p1":[532.86,567.62],"p2":[1316.02,506.18],"m1":50.98,"m2":49.02,"r":0,"h":0,"s1":null,"s2":null},{"f":47,"bx":null,"by":null,"bs":null,"p1":[532.86,567.2],"p2":[1316.3,505.95],"m1":50.84,"m2":49.16,"r":0,"h":0,"s1":null,"s2":null},{"f":48,"bx":null,"by":null,"bs":null,"p1":[533.11,566.92],"p2":[1315.45,505.12],"m1":50.8,"m2":49.2,"r":0,"h":0,"s1":null,"s2":null},{"f":49,"bx":null,"by":null,"bs":null,"p1":[533.15,566.42],"p2":[1315.29,505.49],"m1":50.67,"m2":49.33,"r":0,"h":0,"s1":null,"s2":null},{"f":50,"bx":null,"by":null,"bs":null,"p1":[533.5,566.11],"p2":[1316.43,504.9],"m1":50.66,"m2":49.34,"r":0,"h":0,"s1":null,"s2":null},{"f":51,"bx":null,"by":null,"bs":null,"p1":[533.87,565.99],"p2":[1317.5,505.25],"m1":50.63,"m2":49.37,"r":0,"h":0,"s1":null,"s2":null},{"f":52,"bx":null,"by":null,"bs":null,"p1":[533.9,565.0],"p2":[1318.1,504.6],"m1":50.54,"m2":49.46,"r":0,"h":0,"s1":null,"s2":null},{"f":53,"bx":null,"by":null,"bs":null,"p1":[534.14,564.55],"p2":[1319.27,504.57],"m1":50.52,"m2":49.48,"r":0,"h":0,"s1":null,"s2":null},{"f":54,"bx":null,"by":null,"bs":null,"p1":[534.12,564.11],"p2":[1320.5,504.1],"m1":50.53,"m2":49.47,"r":0,"h":0,"s1":null,"s2":null},{"f":55,"bx":null,"by":null,"bs":null,"p1":[533.96,563.25],"p2":[1320.91,504.25],"m1":50.41,"m2":49.59,"r":0,"h":0,"s1":null,"s2":null},{"f":56,"bx":null,"by":null,"bs":null,"p1":[534.03,562.31],"p2":[1321.21,504.24],"m1":50.3,"m2":49.7,"r":0,"h":0,"s1":null,"s2":null},{"f":57,"bx":null,"by":null,"bs":null,"p1":[534.2,561.34],"p2":[1321.6,504.57],"m1":50.21,"m2":49.79,"r":0,"h":0,"s1":null,"s2":null},{"f":58,"bx":null,"by":null,"bs":null,"p1":[534.91,560.57],"p2":[1322.99,504.52],"m1":50.21,"m2":49.79,"r":0,"h":0,"s1":null,"s2":null},{"f":59,"bx":null,"by":null,"bs":null,"p1":[534.98,559.96],"p2":[1323.62,504.57],"m1":50.19,"m2":49.81,"r":0,"h":0,"s1":null,"s2":null},{"f":60,"bx":null,"by":null,"bs":null,"p1":[535.37,559.43],"p2":[1324.67,505.05],"m1":50.21,"m2":49.79,"r":0,"h":0,"s1":null,"s2":null},{"f":61,"bx":null,"by":null,"bs":null,"p1":[535.67,558.79],"p2":[1324.26,504.76],"m1":50.16,"m2":49.84,"r":0,"h":0,"s1":null,"s2":null},{"f":62,"bx":null,"by":null,"bs":null,"p1":[536.42,557.87],"p2":[1325.52,504.82],"m1":50.14,"m2":49.86,"r":0,"h":0,"s1":null,"s2":null},{"f":63,"bx":null,"by":null,"bs":null,"p1":[536.55,557.32],"p2":[1326.12,504.86],"m1":50.13,"m2":49.87,"r":0,"h":0,"s1":null,"s2":null},{"f":64,"bx":null,"by":null,"bs":null,"p1":[536.87,556.61],"p2":[1327.73,505.28],"m1":50.19,"m2":49.81,"r":0,"h":0,"s1":null,"s2":null},{"f":65,"bx":null,"by":null,"bs":null,"p1":[537.13,555.6],"p2":[1330.41,505.25],"m1":50.32,"m2":49.68,"r":0,"h":0,"s1":null,"s2":null},{"f":66,"bx":null,"by":null,"bs":null,"p1":[537.59,554.93],"p2":[1332.56,505.36],"m1":50.4,"m2":49.6,"r":0,"h":0,"s1":null,"s2":null},{"f":67,"bx":null,"by":null,"bs":null,"p1":[537.52,554.55],"p2":[1334.21,504.91],"m1":50.47,"m2":49.53,"r":0,"h":0,"s1":null,"s2":null},{"f":68,"bx":null,"by":null,"bs":null,"p1":[537.77,553.7],"p2":[1334.54,505.38],"m1":50.37,"m2":49.63,"r":0,"h":0,"s1":null,"s2":null},{"f":69,"bx":null,"by":null,"bs":null,"p1":[537.55,553.16],"p2":[1335.04,505.24],"m1":50.31,"m2":49.69,"r":0,"h":0,"s1":null,"s2":null},{"f":70,"bx":null,"by":null,"bs":null,"p1":[537.32,551.3],"p2":[1337.61,504.44],"m1":50.35,"m2":49.65,"r":0,"h":0,"s1":null,"s2":null},{"f":71,"bx":null,"by":null,"bs":null,"p1":[537.87,550.49],"p2":[1336.85,504.71],"m1":50.28,"m2":49.72,"r":0,"h":0,"s1":null,"s2":null},{"f":72,"bx":null,"by":null,"bs":null,"p1":[538.45,550.12],"p2":[1338.78,504.53],"m1":50.36,"m2":49.64,"r":0,"h":0,"s1":null,"s2":null},{"f":73,"bx":null,"by":null,"bs":null,"p1":[539.41,548.74],"p2":[1338.2,503.97],"m1":50.23,"m2":49.77,"r":0,"h":0,"s1":null,"s2":null},{"f":74,"bx":null,"by":null,"bs":null,"p1":[539.8,547.43],"p2":[1338.49,503.92],"m1":50.09,"m2":49.91,"r":0,"h":0,"s1":null,"s2":null},{"f":75,"bx":null,"by":null,"bs":null,"p1":[539.82,546.91],"p2":[1339.54,503.11],"m1":50.16,"m2":49.84,"r":0,"h":0,"s1":null,"s2":null},{"f":76,"bx":null,"by":null,"bs":null,"p1":[539.86,546.19],"p2":[1342.27,502.31],"m1":50.33,"m2":49.67,"r":0,"h":0,"s1":null,"s2":null},{"f":77,"bx":null,"by":null,"bs":null,"p1":[540.4,545.31],"p2":[1342.65,501.33],"m1":50.29,"m2":49.71,"r":0,"h":0,"s1":null,"s2":null},{"f":78,"bx":null,"by":null,"bs":null,"p1":[540.25,544.42],"p2":[1343.78,501.04],"m1":50.27,"m2":49.73,"r":0,"h":0,"s1":null,"s2":null},{"f":79,"bx":null,"by":null,"bs":null,"p1":[540.34,543.55],"p2":[1344.8,500.14],"m1":50.28,"m2":49.72,"r":0,"h":0,"s1":null,"s2":null},{"f":80,"bx":null,"by":null,"bs":null,"p1":[540.27,542.9],"p2":[1347.57,499.59],"m1":50.44,"m2":49.56,"r":0,"h":0,"s1":null,"s2":null},{"f":81,"bx":null,"by":null,"bs":null,"p1":[538.91,542.1],"p2":[1350.1,498.99],"m1":50.48,"m2":49.52,"r":0,"h":0,"s1":null,"s2":null},{"f":82,"bx":null,"by":null,"bs":null,"p1":[537.02,541.31],"p2":[1351.35,499.09],"m1":50.34,"m2":49.66,"r":0,"h":0,"s1":null,"s2":null},{"f":83,"bx":null,"by":null,"bs":null,"p1":[535.65,540.74],"p2":[1354.16,498.84],"m1":50.41,"m2":49.59,"r":0,"h":0,"s1":null,"s2":null},{"f":84,"bx":null,"by":null,"bs":null,"p1":[535.37,540.2],"p2":[1358.07,499.29],"m1":50.67,"m2":49.33,"r":0,"h":0,"s1":null,"s2":null},{"f":85,"bx":null,"by":null,"bs":null,"p1":[534.27,539.39],"p2":[1360.69,499.38],"m1":50.69,"m2":49.31,"r":0,"h":0,"s1":null,"s2":null},{"f":86,"bx":null,"by":null,"bs":null,"p1":[532.65,538.81],"p2":[1361.62,499.97],"m1":50.54,"m2":49.46,"r":0,"h":0,"s1":null,"s2":null},{"f":87,"bx":null,"by":null,"bs":null,"p1":[532.19,538.25],"p2":[1361.06,500.54],"m1":50.47,"m2":49.53,"r":0,"h":0,"s1":null,"s2":null},{"f":88,"bx":null,"by":null,"bs":null,"p1":[531.23,537.54],"p2":[1361.06,500.48],"m1":50.3,"m2":49.7,"r":0,"h":0,"s1":null,"s2":null},{"f":89,"bx":null,"by":null,"bs":null,"p1":[532.05,537.65],"p2":[1363.92,502.23],"m1":50.49,"m2":49.51,"r":0,"h":0,"s1":null,"s2":null},{"f":90,"bx":null,"by":null,"bs":null,"p1":[529.61,536.95],"p2":[1363.22,504.38],"m1":50.4,"m2":49.6,"r":0,"h":0,"s1":null,"s2":null},{"f":91,"bx":null,"by":null,"bs":null,"p1":[530.36,537.57],"p2":[1361.08,505.38],"m1":50.47,"m2":49.53,"r":0,"h":0,"s1":null,"s2":null},{"f":92,"bx":1426.0,"by":420.5,"bs":null,"p1":[529.87,538.48],"p2":[1361.95,508.3],"m1":50.59,"m2":49.41,"r":1,"h":1,"s1":null,"s2":null},{"f":93,"bx":null,"by":null,"bs":null,"p1":[530.06,539.38],"p2":[1355.39,505.91],"m1":49.84,"m2":50.16,"r":1,"h":1,"s1":null,"s2":null},{"f":94,"bx":null,"by":null,"bs":null,"p1":[530.48,540.28],"p2":[1353.83,504.67],"m1":48.71,"m2":51.29,"r":1,"h":1,"s1":null,"s2":null},{"f":95,"bx":null,"by":null,"bs":null,"p1":[530.21,541.05],"p2":[1352.9,505.53],"m1":47.7,"m2":52.3,"r":1,"h":1,"s1":null,"s2":null},{"f":96,"bx":null,"by":null,"bs":null,"p1":[530.14,541.15],"p2":[1352.82,505.45],"m1":46.78,"m2":53.22,"r":1,"h":1,"s1":null,"s2":null},{"f":97,"bx":null,"by":null,"bs":null,"p1":[530.06,540.58],"p2":[1353.66,506.19],"m1":46.04,"m2":53.96,"r":1,"h":1,"s1":null,"s2":null},{"f":98,"bx":null,"by":null,"bs":null,"p1":[529.31,540.14],"p2":[1354.43,507.69],"m1":45.44,"m2":54.56,"r":1,"h":1,"s1":null,"s2":null},{"f":99,"bx":1307.0,"by":482.5,"bs":958.45,"p1":[528.59,539.41],"p2":[1356.69,508.29],"m1":44.96,"m2":55.04,"r":1,"h":1,"s1":null,"s2":null},{"f":101,"bx":1240.0,"by":511.0,"bs":1389.35,"p1":[527.83,537.46],"p2":[1364.74,508.65],"m1":44.15,"m2":55.85,"r":1,"h":1,"s1":null,"s2":null},{"f":102,"bx":1206.5,"by":515.0,"bs":1686.9,"p1":[527.17,536.51],"p2":[1367.84,509.62],"m1":42.98,"m2":57.02,"r":1,"h":1,"s1":null,"s2":null},{"f":103,"bx":1182.0,"by":507.5,"bs":1484.01,"p1":[527.37,535.89],"p2":[1374.63,516.09],"m1":42.86,"m2":57.14,"r":1,"h":1,"s1":null,"s2":null},{"f":104,"bx":1156.5,"by":499.0,"bs":1343.97,"p1":[527.66,534.66],"p2":[1380.68,523.95],"m1":42.93,"m2":57.07,"r":1,"h":1,"s1":null,"s2":null},{"f":105,"bx":1133.0,"by":494.5,"bs":1343.97,"p1":[527.63,534.62],"p2":[1389.53,521.14],"m1":43.05,"m2":56.95,"r":1,"h":1,"s1":null,"s2":null},{"f":106,"bx":1109.5,"by":488.5,"bs":1281.11,"p1":[527.69,534.63],"p2":[1397.84,519.65],"m1":43.15,"m2":56.85,"r":1,"h":1,"s1":null,"s2":null},{"f":107,"bx":1084.5,"by":483.5,"bs":1274.75,"p1":[527.17,534.2],"p2":[1401.52,517.49],"m1":42.79,"m2":57.21,"r":1,"h":1,"s1":null,"s2":null},{"f":108,"bx":1062.5,"by":481.5,"bs":1212.69,"p1":[527.33,534.78],"p2":[1407.47,514.06],"m1":42.82,"m2":57.18,"r":1,"h":1,"s1":null,"s2":null},{"f":109,"bx":1037.0,"by":479.0,"bs":1212.69,"p1":[527.08,535.23],"p2":[1410.4,514.41],"m1":42.48,"m2":57.52,"r":1,"h":1,"s1":null,"s2":null},{"f":110,"bx":1014.5,"by":478.0,"bs":1212.69,"p1":[525.63,536.87],"p2":[1413.72,512.36],"m1":42.13,"m2":57.87,"r":1,"h":1,"s1":null,"s2":null},{"f":111,"bx":991.0,"by":478.5,"bs":1175.27,"p1":[523.2,537.78],"p2":[1418.16,511.4],"m1":41.89,"m2":58.11,"r":1,"h":1,"s1":null,"s2":null},{"f":112,"bx":969.5,"by":479.0,"bs":1126.11,"p1":[521.37,540.31],"p2":[1425.03,511.47],"m1":41.92,"m2":58.08,"r":1,"h":1,"s1":null,"s2":null},{"f":113,"bx":948.0,"by":477.5,"bs":1126.11,"p1":[521.24,544.2],"p2":[1430.61,508.89],"m1":41.81,"m2":58.19,"r":1,"h":1,"s1":null,"s2":null},{"f":114,"bx":924.0,"by":482.5,"bs":1126.11,"p1":[522.42,547.61],"p2":[1438.02,505.71],"m1":41.92,"m2":58.08,"r":1,"h":1,"s1":null,"s2":null},{"f":115,"bx":903.0,"by":486.5,"bs":1077.61,"p1":[523.2,551.31],"p2":[1443.36,507.53],"m1":41.83,"m2":58.17,"r":1,"h":1,"s1":null,"s2":null},{"f":116,"bx":879.5,"by":491.5,"bs":1077.61,"p1":[524.63,556.13],"p2":[1454.09,508.05],"m1":42.11,"m2":57.89,"r":1,"h":1,"s1":null,"s2":null},{"f":117,"bx":858.0,"by":498.0,"bs":1123.05,"p1":[526.21,561.07],"p2":[1459.68,509.89],"m1":41.83,"m2":58.17,"r":1,"h":1,"s1":null,"s2":null},{"f":118,"bx":837.0,"by":504.5,"bs":1123.05,"p1":[527.37,564.26],"p2":[1471.48,511.26],"m1":42.32,"m2":57.68,"r":1,"h":1,"s1":null,"s2":null},{"f":119,"bx":817.5,"by":511.0,"bs":1099.15,"p1":[528.73,569.09],"p2":[1477.87,510.79],"m1":42.1,"m2":57.9,"r":1,"h":1,"s1":null,"s2":null},{"f":120,"bx":795.0,"by":520.5,"bs":1123.05,"p1":[529.59,573.37],"p2":[1486.93,511.36],"m1":42.19,"m2":57.81,"r":1,"h":1,"s1":null,"s2":null},{"f":121,"bx":776.0,"by":529.0,"bs":1099.15,"p1":[530.58,578.46],"p2":[1493.63,513.97],"m1":42.05,"m2":57.95,"r":1,"h":1,"s1":null,"s2":null},{"f":122,"bx":755.5,"by":539.5,"bs":1099.15,"p1":[532.09,587.71],"p2":[1501.65,516.42],"m1":41.65,"m2":58.35,"r":1,"h":1,"s1":null,"s2":null},{"f":123,"bx":735.5,"by":552.5,"bs":1151.63,"p1":[532.97,594.4],"p2":[1507.4,519.52],"m1":41.32,"m2":58.68,"r":1,"h":1,"s1":null,"s2":null},{"f":124,"bx":717.5,"by":562.0,"bs":1151.63,"p1":[534.24,599.3],"p2":[1513.16,523.7],"m1":41.23,"m2":58.77,"r":1,"h":1,"s1":null,"s2":null},{"f":125,"bx":701.5,"by":556.5,"bs":1040.73,"p1":[535.73,603.09],"p2":[1516.41,526.63],"m1":41.14,"m2":58.86,"r":1,"h":1,"s1":null,"s2":null},{"f":126,"bx":683.5,"by":550.5,"bs":1017.66,"p1":[539.69,607.8],"p2":[1518.15,528.47],"m1":40.73,"m2":59.27,"r":1,"h":1,"s1":null,"s2":null},{"f":127,"bx":665.5,"by":548.5,"bs":948.68,"p1":[542.04,610.77],"p2":[1518.99,530.09],"m1":40.62,"m2":59.38,"r":1,"h":1,"s1":null,"s2":null},{"f":128,"bx":null,"by":null,"bs":null,"p1":[546.99,614.24],"p2":[1518.09,531.01],"m1":42.66,"m2":57.34,"r":1,"h":1,"s1":null,"s2":null},{"f":129,"bx":null,"by":null,"bs":null,"p1":[552.15,617.85],"p2":[1518.93,530.99],"m1":44.35,"m2":55.65,"r":1,"h":1,"s1":null,"s2":null},{"f":130,"bx":674.0,"by":533.0,"bs":905.54,"p1":[561.91,619.59],"p2":[1520.27,529.9],"m1":45.55,"m2":54.45,"r":1,"h":1,"s1":null,"s2":null},{"f":131,"bx":705.0,"by":524.5,"bs":905.54,"p1":[562.63,620.23],"p2":[1521.78,528.39],"m1":47.45,"m2":52.55,"r":1,"h":2,"s1":null,"s2":null},{"f":132,"bx":730.0,"by":516.5,"bs":948.68,"p1":[566.3,620.25],"p2":[1520.51,527.71],"m1":48.82,"m2":51.18,"r":1,"h":2,"s1":null,"s2":null},{"f":133,"bx":759.0,"by":510.0,"bs":1312.44,"p1":[567.17,620.55],"p2":[1518.58,530.59],"m1":50.92,"m2":49.08,"r":1,"h":2,"s1":null,"s2":null},{"f":134,"bx":782.5,"by":504.5,"bs":1312.44,"p1":[567.18,620.33],"p2":[1514.97,530.72],"m1":52.81,"m2":47.19,"r":1,"h":2,"s1":null,"s2":null},{"f":135,"bx":811.0,"by":499.5,"bs":1446.76,"p1":[566.96,620.05],"p2":[1510.3,531.82],"m1":54.7,"m2":45.3,"r":1,"h":2,"s1":null,"s2":null},{"f":136,"bx":834.0,"by":496.0,"bs":1312.44,"p1":[566.45,618.76],"p2":[1509.57,532.62],"m1":55.71,"m2":44.29,"r":1,"h":2,"s1":null,"s2":null},{"f":137,"bx":858.0,"by":491.5,"bs":1220.91,"p1":[565.64,618.05],"p2":[1508.93,534.55],"m1":56.58,"m2":43.42,"r":1,"h":2,"s1":null,"s2":null},{"f":138,"bx":883.0,"by":489.0,"bs":1220.91,"p1":[563.63,615.84],"p2":[1506.87,539.33],"m1":57.44,"m2":42.56,"r":1,"h":2,"s1":null,"s2":null},{"f":139,"bx":904.5,"by":486.5,"bs":1220.91,"p1":[562.2,613.95],"p2":[1506.19,542.88],"m1":58.09,"m2":41.91,"r":1,"h":2,"s1":null,"s2":null},{"f":140,"bx":929.0,"by":485.0,"bs":1220.91,"p1":[560.17,610.61],"p2":[1504.9,543.78],"m1":58.32,"m2":41.68,"r":1,"h":2,"s1":null,"s2":null},{"f":141,"bx":950.0,"by":485.0,"bs":1220.91,"p1":[559.19,608.03],"p2":[1504.15,548.53],"m1":58.92,"m2":41.08,"r":1,"h":2,"s1":null,"s2":null},{"f":142,"bx":971.0,"by":486.0,"bs":1082.24,"p1":[557.2,605.54],"p2":[1502.28,552.04],"m1":59.15,"m2":40.85,"r":1,"h":2,"s1":null,"s2":null},{"f":143,"bx":991.5,"by":487.0,"bs":1051.19,"p1":[556.4,603.37],"p2":[1500.35,554.34],"m1":59.29,"m2":40.71,"r":1,"h":2,"s1":null,"s2":null},{"f":144,"bx":1011.0,"by":489.0,"bs":1050.0,"p1":[554.04,601.24],"p2":[1499.28,557.11],"m1":59.33,"m2":40.67,"r":1,"h":2,"s1":null,"s2":null},{"f":145,"bx":1031.0,"by":490.5,"bs":1026.22,"p1":[552.13,599.5],"p2":[1498.21,559.62],"m1":59.36,"m2":40.64,"r":1,"h":2,"s1":null,"s2":null},{"f":146,"bx":1051.5,"by":493.0,"bs":1026.22,"p1":[547.94,598.63],"p2":[1498.15,561.15],"m1":59.12,"m2":40.88,"r":1,"h":2,"s1":null,"s2":null},{"f":147,"bx":1069.0,"by":496.0,"bs":1002.81,"p1":[545.4,597.23],"p2":[1497.89,562.15],"m1":58.96,"m2":41.04,"r":1,"h":2,"s1":null,"s2":null},{"f":148,"bx":1087.0,"by":500.0,"bs":980.11,"p1":[544.21,596.4],"p2":[1497.36,562.51],"m1":58.9,"m2":41.1,"r":1,"h":2,"s1":null,"s2":null},{"f":149,"bx":1106.0,"by":504.0,"bs":970.82,"p1":[543.16,596.07],"p2":[1497.25,561.91],"m1":58.86,"m2":41.14,"r":1,"h":2,"s1":null,"s2":null},{"f":150,"bx":1123.5,"by":512.0,"bs":962.09,"p1":[541.15,595.42],"p2":[1496.12,562.06],"m1":58.77,"m2":41.23,"r":1,"h":2,"s1":null,"s2":null},{"f":151,"bx":1137.5,"by":509.5,"bs":921.95,"p1":[541.11,595.38],"p2":[1493.61,560.91],"m1":58.99,"m2":41.01,"r":1,"h":2,"s1":null,"s2":null},{"f":152,"bx":1150.5,"by":493.5,"bs":962.09,"p1":[539.6,595.22],"p2":[1493.98,559.16],"m1":59.0,"m2":41.0,"r":1,"h":2,"s1":null,"s2":null},{"f":153,"bx":1164.0,"by":485.0,"bs":962.09,"p1":[540.52,594.79],"p2":[1494.83,558.51],"m1":58.99,"m2":41.01,"r":1,"h":2,"s1":null,"s2":null},{"f":154,"bx":1178.0,"by":477.5,"bs":797.65,"p1":[538.69,594.12],"p2":[1490.48,557.9],"m1":58.99,"m2":41.01,"r":1,"h":2,"s1":null,"s2":null},{"f":155,"bx":1193.0,"by":470.0,"bs":797.65,"p1":[538.03,593.73],"p2":[1484.57,557.9],"m1":59.24,"m2":40.76,"r":1,"h":2,"s1":null,"s2":null},{"f":156,"bx":null,"by":null,"bs":null,"p1":[536.07,593.09],"p2":[1475.96,556.26],"m1":59.6,"m2":40.4,"r":1,"h":2,"s1":null,"s2":null},{"f":157,"bx":1217.0,"by":460.0,"bs":797.65,"p1":[537.51,591.92],"p2":[1468.75,556.91],"m1":59.79,"m2":40.21,"r":1,"h":2,"s1":null,"s2":null},{"f":158,"bx":null,"by":null,"bs":null,"p1":[535.89,589.99],"p2":[1464.35,556.5],"m1":59.63,"m2":40.37,"r":1,"h":2,"s1":null,"s2":null},{"f":159,"bx":null,"by":null,"bs":null,"p1":[532.6,589.59],"p2":[1460.34,555.28],"m1":59.39,"m2":40.61,"r":1,"h":2,"s1":null,"s2":null},{"f":160,"bx":null,"by":null,"bs":null,"p1":[530.34,587.41],"p2":[1457.45,556.22],"m1":59.09,"m2":40.91,"r":1,"h":2,"s1":null,"s2":null},{"f":161,"bx":null,"by":null,"bs":null,"p1":[529.77,582.42],"p2":[1454.23,555.58],"m1":58.68,"m2":41.32,"r":1,"h":2,"s1":null,"s2":null},{"f":162,"bx":1274.5,"by":445.0,"bs":794.12,"p1":[527.7,579.77],"p2":[1450.83,554.72],"m1":58.51,"m2":41.49,"r":1,"h":2,"s1":null,"s2":null},{"f":163,"bx":1286.5,"by":443.0,"bs":650.0,"p1":[526.21,577.54],"p2":[1446.99,555.95],"m1":58.28,"m2":41.72,"r":1,"h":2,"s1":null,"s2":null},{"f":164,"bx":1297.0,"by":443.0,"bs":608.28,"p1":[525.56,573.86],"p2":[1445.76,555.93],"m1":57.67,"m2":42.33,"r":1,"h":2,"s1":null,"s2":null},{"f":165,"bx":1308.5,"by":443.5,"bs":594.24,"p1":[524.9,571.14],"p2":[1444.07,555.76],"m1":57.26,"m2":42.74,"r":1,"h":2,"s1":null,"s2":null},{"f":166,"bx":1319.0,"by":445.0,"bs":575.54,"p1":[523.43,569.67],"p2":[1443.36,555.94],"m1":56.86,"m2":43.14,"r":1,"h":2,"s1":null,"s2":null},{"f":167,"bx":null,"by":null,"bs":null,"p1":[521.63,567.62],"p2":[1442.4,555.78],"m1":56.43,"m2":43.57,"r":1,"h":2,"s1":null,"s2":null},{"f":168,"bx":1338.5,"by":452.0,"bs":530.33,"p1":[519.38,565.19],"p2":[1436.54,555.68],"m1":56.45,"m2":43.55,"r":1,"h":2,"s1":null,"s2":null},{"f":169,"bx":1323.5,"by":447.5,"bs":530.33,"p1":[518.46,563.36],"p2":[1430.47,553.08],"m1":55.29,"m2":44.71,"r":1,"h":3,"s1":null,"s2":null},{"f":170,"bx":1298.5,"by":445.0,"bs":575.54,"p1":[518.6,563.89],"p2":[1419.71,552.17],"m1":54.76,"m2":45.24,"r":1,"h":3,"s1":null,"s2":null},{"f":171,"bx":1271.5,"by":438.5,"bs":783.02,"p1":[518.67,564.54],"p2":[1413.63,550.75],"m1":53.6,"m2":46.4,"r":1,"h":3,"s1":null,"s2":null},{"f":172,"bx":null,"by":null,"bs":null,"p1":[518.11,566.06],"p2":[1405.0,548.58],"m1":54.79,"m2":45.21,"r":1,"h":3,"s1":null,"s2":null},{"f":173,"bx":1280.0,"by":453.5,"bs":783.02,"p1":[519.08,567.78],"p2":[1400.95,545.34],"m1":55.43,"m2":44.57,"r":1,"h":3,"s1":null,"s2":null},{"f":174,"bx":1267.0,"by":438.5,"bs":992.47,"p1":[517.32,568.58],"p2":[1392.54,540.21],"m1":54.13,"m2":45.87,"r":1,"h":3,"s1":null,"s2":null},{"f":175,"bx":1273.0,"by":454.0,"bs":992.47,"p1":[516.59,570.04],"p2":[1392.43,537.22],"m1":54.96,"m2":45.04,"r":1,"h":3,"s1":null,"s2":null},{"f":176,"bx":null,"by":null,"bs":null,"p1":[515.39,570.69],"p2":[1390.51,533.49],"m1":53.25,"m2":46.75,"r":1,"h":3,"s1":null,"s2":null},{"f":177,"bx":null,"by":null,"bs":null,"p1":[516.47,571.85],"p2":[1388.87,531.96],"m1":51.57,"m2":48.43,"r":1,"h":3,"s1":null,"s2":null},{"f":178,"bx":null,"by":null,"bs":null,"p1":[514.42,572.37],"p2":[1387.42,529.23],"m1":50.16,"m2":49.84,"r":1,"h":3,"s1":null,"s2":null},{"f":179,"bx":null,"by":null,"bs":null,"p1":[514.92,572.79],"p2":[1389.98,525.72],"m1":49.2,"m2":50.8,"r":1,"h":3,"s1":null,"s2":null},{"f":180,"bx":null,"by":null,"bs":null,"p1":[514.82,573.37],"p2":[1393.86,523.42],"m1":48.4,"m2":51.6,"r":1,"h":3,"s1":null,"s2":null},{"f":181,"bx":null,"by":null,"bs":null,"p1":[514.62,573.32],"p2":[1395.72,522.25],"m1":47.52,"m2":52.48,"r":1,"h":3,"s1":null,"s2":null},{"f":182,"bx":1009.0,"by":430.0,"bs":992.47,"p1":[514.15,573.68],"p2":[1398.89,521.09],"m1":46.85,"m2":53.15,"r":1,"h":4,"s1":null,"s2":null},{"f":183,"bx":986.5,"by":433.0,"bs":992.47,"p1":[513.77,574.24],"p2":[1400.42,521.94],"m1":46.11,"m2":53.89,"r":1,"h":4,"s1":null,"s2":null},{"f":184,"bx":965.5,"by":438.5,"bs":1085.41,"p1":[511.94,575.4],"p2":[1402.11,522.81],"m1":45.22,"m2":54.78,"r":1,"h":4,"s1":null,"s2":null},{"f":185,"bx":950.0,"by":442.5,"bs":1085.41,"p1":[511.7,578.11],"p2":[1406.32,525.72],"m1":44.71,"m2":55.29,"r":1,"h":4,"s1":null,"s2":null},{"f":186,"bx":923.0,"by":447.5,"bs":1134.96,"p1":[509.8,580.29],"p2":[1409.87,529.31],"m1":44.19,"m2":55.81,"r":1,"h":4,"s1":null,"s2":null},{"f":187,"bx":null,"by":null,"bs":null,"p1":[509.32,581.91],"p2":[1414.11,533.66],"m1":43.98,"m2":56.02,"r":1,"h":4,"s1":null,"s2":null},{"f":188,"bx":879.5,"by":456.0,"bs":1108.07,"p1":[507.61,582.98],"p2":[1418.86,536.49],"m1":43.72,"m2":56.28,"r":1,"h":4,"s1":null,"s2":null},{"f":189,"bx":null,"by":null,"bs":null,"p1":[507.22,583.72],"p2":[1419.5,542.93],"m1":43.72,"m2":56.28,"r":1,"h":4,"s1":null,"s2":null},{"f":190,"bx":null,"by":null,"bs":null,"p1":[507.41,585.5],"p2":[1424.11,549.55],"m1":43.78,"m2":56.22,"r":1,"h":4,"s1":null,"s2":null},{"f":191,"bx":819.0,"by":478.0,"bs":1085.41,"p1":[507.79,587.5],"p2":[1425.74,555.46],"m1":43.63,"m2":56.37,"r":1,"h":4,"s1":null,"s2":null},{"f":192,"bx":796.5,"by":486.0,"bs":1108.07,"p1":[508.01,588.69],"p2":[1429.22,560.7],"m1":43.57,"m2":56.43,"r":1,"h":4,"s1":null,"s2":null},{"f":193,"bx":777.5,"by":496.0,"bs":1108.07,"p1":[508.23,589.11],"p2":[1432.22,565.5],"m1":43.52,"m2":56.48,"r":1,"h":4,"s1":null,"s2":null},{"f":194,"bx":759.0,"by":506.0,"bs":1073.55,"p1":[508.78,589.21],"p2":[1432.47,569.19],"m1":43.33,"m2":56.67,"r":1,"h":4,"s1":null,"s2":null},{"f":195,"bx":738.0,"by":511.0,"bs":1073.55,"p1":[509.45,590.36],"p2":[1432.87,571.78],"m1":43.0,"m2":57.0,"r":1,"h":4,"s1":null,"s2":null},{"f":196,"bx":721.0,"by":502.0,"bs":1073.55,"p1":[510.83,591.77],"p2":[1435.81,573.66],"m1":42.73,"m2":57.27,"r":1,"h":4,"s1":null,"s2":null},{"f":197,"bx":706.0,"by":495.5,"bs":1051.49,"p1":[513.14,592.53],"p2":[1436.83,574.25],"m1":42.27,"m2":57.73,"r":1,"h":4,"s1":null,"s2":null},{"f":198,"bx":691.5,"by":490.5,"bs":961.77,"p1":[515.38,593.63],"p2":[1438.74,572.89],"m1":42.1,"m2":57.9,"r":1,"h":4,"s1":null,"s2":null},{"f":199,"bx":null,"by":null,"bs":null,"p1":[518.19,594.19],"p2":[1440.62,571.87],"m1":43.14,"m2":56.86,"r":0,"h":0,"s1":null,"s2":null},{"f":200,"bx":null,"by":null,"bs":null,"p1":[523.37,594.05],"p2":[1443.86,570.39],"m1":43.95,"m2":56.05,"r":0,"h":0,"s1":null,"s2":null}];
+    const analysisFps = 50.000000;
+    const analysisVideo = document.getElementById('analysis-video');
+    const timelineCanvas = document.getElementById('match-timeline');
+    const timelineCanvasWrap = document.getElementById('timeline-canvas-wrap');
+    const timelineScrubber = document.getElementById('timeline-scrubber');
+    const timelineFields = {
+      frame: document.getElementById('timeline-frame'),
+      rally: document.getElementById('timeline-rally'),
+      speed: document.getElementById('timeline-speed'),
+      momentum: document.getElementById('timeline-momentum'),
+      score: document.getElementById('timeline-score'),
+      positions: document.getElementById('timeline-positions'),
+    };
+    let activeTimelineIndex = 0;
+    let animationFrameId = null;
+
+    timelineScrubber.max = String(Math.max(0, timelineData.length - 1));
+
+    function clampTimelineIndex(index) {
+      return Math.max(0, Math.min(timelineData.length - 1, Number(index) || 0));
+    }
+
+    function formatPoint(point) {
+      return point ? `${Math.round(point[0])},${Math.round(point[1])}` : '—';
+    }
+
+    function drawTimeline() {
+      if (!timelineData.length) return;
+      const rect = timelineCanvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const width = Math.max(1, rect.width);
+      const height = Math.max(1, rect.height);
+      const pixelWidth = Math.round(width * dpr);
+      const pixelHeight = Math.round(height * dpr);
+      if (timelineCanvas.width !== pixelWidth || timelineCanvas.height !== pixelHeight) {
+        timelineCanvas.width = pixelWidth;
+        timelineCanvas.height = pixelHeight;
+      }
+      const context = timelineCanvas.getContext('2d');
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      context.clearRect(0, 0, width, height);
+
+      const inset = 10;
+      const plotWidth = Math.max(1, width - inset * 2);
+      const plotHeight = Math.max(1, height - inset * 2);
+      const xAt = (index) => inset + (index / Math.max(1, timelineData.length - 1)) * plotWidth;
+      const yAt = (value) => inset + (1 - Math.max(0, Math.min(100, value)) / 100) * plotHeight;
+
+      context.strokeStyle = 'rgba(163,186,215,0.12)';
+      context.lineWidth = 1;
+      [0.25, 0.5, 0.75].forEach((fraction) => {
+        const y = inset + plotHeight * fraction;
+        context.beginPath();
+        context.moveTo(inset, y);
+        context.lineTo(width - inset, y);
+        context.stroke();
+      });
+
+      let bandStart = null;
+      let bandRally = 0;
+      timelineData.forEach((sample, index) => {
+        if (sample.r !== bandRally) {
+          if (bandRally && bandStart !== null) {
+            context.fillStyle = 'rgba(76,230,195,0.10)';
+            context.fillRect(xAt(bandStart), inset, Math.max(2, xAt(index) - xAt(bandStart)), plotHeight);
+          }
+          bandRally = sample.r;
+          bandStart = sample.r ? index : null;
+        }
+      });
+      if (bandRally && bandStart !== null) {
+        context.fillStyle = 'rgba(76,230,195,0.10)';
+        context.fillRect(xAt(bandStart), inset, width - inset - xAt(bandStart), plotHeight);
+      }
+
+      function drawSeries(valueFor, color, lineWidth = 2) {
+        context.strokeStyle = color;
+        context.lineWidth = lineWidth;
+        context.lineJoin = 'round';
+        context.lineCap = 'round';
+        context.beginPath();
+        let drawing = false;
+        timelineData.forEach((sample, index) => {
+          const value = valueFor(sample);
+          if (value === null || value === undefined) {
+            drawing = false;
+            return;
+          }
+          const x = xAt(index);
+          const y = yAt(value);
+          if (drawing) context.lineTo(x, y);
+          else context.moveTo(x, y);
+          drawing = true;
+        });
+        context.stroke();
+      }
+
+      const maxSpeed = Math.max(1, ...timelineData.map((sample) => sample.bs || 0));
+      drawSeries((sample) => sample.m1, '#4ce6c3', 2.2);
+      drawSeries((sample) => sample.m2, '#5d8cff', 2.2);
+      drawSeries((sample) => sample.bs === null ? null : sample.bs / maxSpeed * 100, '#ffcc66', 1.5);
+
+      const playheadX = xAt(activeTimelineIndex);
+      context.strokeStyle = 'rgba(255,255,255,0.95)';
+      context.lineWidth = 1.5;
+      context.beginPath();
+      context.moveTo(playheadX, 0);
+      context.lineTo(playheadX, height);
+      context.stroke();
+      context.fillStyle = '#ffffff';
+      context.beginPath();
+      context.arc(playheadX, 8, 3.5, 0, Math.PI * 2);
+      context.fill();
+    }
+
+    function updateTimeline(index) {
+      if (!timelineData.length) return;
+      activeTimelineIndex = Math.round(clampTimelineIndex(index));
+      const sample = timelineData[activeTimelineIndex];
+      timelineScrubber.value = String(activeTimelineIndex);
+      timelineFields.frame.textContent = String(sample.f);
+      timelineFields.rally.textContent = sample.r ? `R${sample.r} · ~${sample.h} hits` : 'Between rallies';
+      timelineFields.speed.textContent = sample.bs === null ? 'Not detected' : `${sample.bs.toFixed(0)} px/s`;
+      timelineFields.momentum.textContent = sample.m1 === null ? 'Not available' : `P1 ${sample.m1.toFixed(1)} · P2 ${sample.m2.toFixed(1)}`;
+      timelineFields.score.textContent = sample.s1 === null ? 'Not read' : `${sample.s1}–${sample.s2}`;
+      const ball = sample.bx === null ? 'ball —' : `ball ${Math.round(sample.bx)},${Math.round(sample.by)}`;
+      timelineFields.positions.textContent = `L ${formatPoint(sample.p1)} · R ${formatPoint(sample.p2)} · ${ball}`;
+      drawTimeline();
+    }
+
+    function syncTimelineToVideo() {
+      updateTimeline(Math.floor(analysisVideo.currentTime * analysisFps));
+    }
+
+    function followPlayback() {
+      syncTimelineToVideo();
+      if (!analysisVideo.paused && !analysisVideo.ended) {
+        animationFrameId = window.requestAnimationFrame(followPlayback);
+      }
+    }
+
+    analysisVideo.addEventListener('play', () => {
+      if (animationFrameId !== null) window.cancelAnimationFrame(animationFrameId);
+      followPlayback();
+    });
+    ['pause', 'seeked', 'timeupdate', 'loadedmetadata'].forEach((eventName) => {
+      analysisVideo.addEventListener(eventName, syncTimelineToVideo);
+    });
+    timelineScrubber.addEventListener('input', () => {
+      const index = clampTimelineIndex(timelineScrubber.value);
+      analysisVideo.currentTime = index / analysisFps;
+      updateTimeline(index);
+    });
+    timelineCanvasWrap.addEventListener('pointerdown', (event) => {
+      const rect = timelineCanvasWrap.getBoundingClientRect();
+      const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+      const index = Math.round(fraction * Math.max(0, timelineData.length - 1));
+      analysisVideo.currentTime = index / analysisFps;
+      updateTimeline(index);
+    });
+    new ResizeObserver(drawTimeline).observe(timelineCanvasWrap);
+    updateTimeline(0);
+
+    const chartButtons = [...document.querySelectorAll('.chart-tab')];
+    const chartImage = document.getElementById('active-chart');
+    const chartCaption = document.getElementById('chart-caption');
+    const chartDownload = document.getElementById('chart-download');
+
+    chartButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        chartButtons.forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+        chartImage.classList.add('is-switching');
+        window.setTimeout(() => {
+          chartImage.src = button.dataset.src;
+          chartImage.alt = button.dataset.alt;
+          chartCaption.textContent = button.dataset.title;
+          chartDownload.href = button.dataset.src;
+          chartImage.classList.remove('is-switching');
+        }, 120);
+      });
+    });
+
+    const videos = [...document.querySelectorAll('video')];
+    videos.forEach((video) => video.addEventListener('play', () => {
+      videos.filter((other) => other !== video).forEach((other) => other.pause());
+    }));
+  </script>
+</body>
+</html>

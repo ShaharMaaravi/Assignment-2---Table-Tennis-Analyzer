@@ -15,6 +15,11 @@ player_position_heatmap.png
 score_over_time.png
 ball_positions.csv
 ball_speed_over_time.png
+rally_statistics.csv
+rally_analysis.png
+match_highlights.mp4
+match_momentum.csv
+match_momentum.png
 .roboflow_prediction_cache.json
 runs/
 roboflow_ball_dataset/
