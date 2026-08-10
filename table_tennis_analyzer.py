@@ -41,7 +41,7 @@ EASYOCR_MODEL_DIRECTORY = Path(".easyocr")
 
 # END_FRAME is inclusive. Set END_FRAME to 0 to process the entire video.
 START_FRAME = 0
-END_FRAME = 200
+END_FRAME = 1200
 CONFIDENCE = 0.25
 
 # Side-view validation thresholds, expressed relative to the frame dimensions.
