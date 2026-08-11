@@ -41,7 +41,7 @@ EASYOCR_MODEL_DIRECTORY = Path(".easyocr")
 
 # END_FRAME is inclusive. Set END_FRAME to 0 to process the entire video.
 START_FRAME = 0
-END_FRAME = 1200
+END_FRAME = 450
 CONFIDENCE = 0.25
 
 # Side-view validation thresholds, expressed relative to the frame dimensions.
@@ -101,6 +101,12 @@ MOMENTUM_ATTACK_WEIGHT = 22.0
 MOMENTUM_MOVEMENT_WEIGHT = 8.0
 MOMENTUM_SCORE_WEIGHT = 20.0
 MOMENTUM_SMOOTHING_ALPHA = 0.14
+
+# Dashboard-only speed presentation. These values never feed back into ball
+# tracking, CSV exports, rally detection, hit estimates, or match momentum.
+DASHBOARD_SPEED_GAP_TOLERANCE_FRAMES = 4
+DASHBOARD_SPEED_SMOOTHING_RADIUS = 4
+DASHBOARD_SPEED_SPIKE_TOLERANCE_PX_PER_SECOND = 700.0
 
 Position = tuple[float, float]
 Score = tuple[int, int, int, int]
@@ -1332,6 +1338,73 @@ def create_momentum_chart(
     plt.close(figure)
 
 
+def smooth_dashboard_speed_series(
+    raw_speeds: list[float | None],
+) -> list[float | None]:
+    """Return a calmer display-only speed series without changing analytics."""
+    if not raw_speeds:
+        return []
+
+    series = np.asarray(
+        [np.nan if speed is None else float(speed) for speed in raw_speeds],
+        dtype=float,
+    )
+    detected_indices = np.flatnonzero(np.isfinite(series))
+
+    # Fill only brief detector dropouts. Longer gaps remain empty so the chart
+    # does not imply that the ball was tracked when it was not.
+    for left_index, right_index in zip(detected_indices, detected_indices[1:]):
+        missing_count = int(right_index - left_index - 1)
+        if not 0 < missing_count <= DASHBOARD_SPEED_GAP_TOLERANCE_FRAMES:
+            continue
+        series[left_index : right_index + 1] = np.linspace(
+            series[left_index],
+            series[right_index],
+            missing_count + 2,
+        )
+
+    smoothed = np.full(series.shape, np.nan, dtype=float)
+    finite_mask = np.isfinite(series)
+    index = 0
+    while index < len(series):
+        if not finite_mask[index]:
+            index += 1
+            continue
+
+        segment_end = index + 1
+        while segment_end < len(series) and finite_mask[segment_end]:
+            segment_end += 1
+        segment = series[index:segment_end].copy()
+
+        # Limit isolated display spikes relative to the local median. This is a
+        # visual tolerance only; raw speed remains available in timeline data.
+        spike_filtered = segment.copy()
+        for local_index, value in enumerate(segment):
+            window_start = max(0, local_index - 2)
+            window_end = min(len(segment), local_index + 3)
+            local_median = float(np.median(segment[window_start:window_end]))
+            difference = float(value - local_median)
+            tolerance = DASHBOARD_SPEED_SPIKE_TOLERANCE_PX_PER_SECOND
+            if abs(difference) > tolerance:
+                spike_filtered[local_index] = local_median + np.sign(difference) * tolerance
+
+        radius = min(DASHBOARD_SPEED_SMOOTHING_RADIUS, len(segment) - 1)
+        if radius <= 0:
+            smoothed[index:segment_end] = spike_filtered
+        else:
+            ascending = np.arange(1, radius + 2, dtype=float)
+            weights = np.concatenate((ascending, ascending[-2::-1]))
+            padded = np.pad(spike_filtered, radius, mode="edge")
+            smoothed[index:segment_end] = np.convolve(
+                padded,
+                weights / weights.sum(),
+                mode="valid",
+            )
+        index = segment_end
+
+    return [None if np.isnan(speed) else float(speed) for speed in smoothed]
+
+
 def create_html_dashboard(
     inspected_frames: int,
     written_frames: int,
@@ -1368,6 +1441,15 @@ def create_html_dashboard(
         default=0.0,
     )
     ball_by_frame = {point.frame_number: point for point in ball_track_points}
+    dashboard_raw_speeds = [
+        None
+        if (ball := ball_by_frame.get(source_frame)) is None
+        else ball.speed
+        for source_frame in valid_source_frames
+    ]
+    dashboard_smoothed_speeds = smooth_dashboard_speed_series(
+        dashboard_raw_speeds
+    )
     players_by_frame = {
         sample.frame_number: sample for sample in player_position_samples
     }
@@ -1383,7 +1465,7 @@ def create_html_dashboard(
     timeline_data: list[dict[str, Any]] = []
     last_score_values: tuple[int, int] | None = None
     rally_index = 0
-    for source_frame in valid_source_frames:
+    for timeline_index, source_frame in enumerate(valid_source_frames):
         if source_frame in scores_by_frame:
             last_score_values = scores_by_frame[source_frame]
         while (
@@ -1409,6 +1491,11 @@ def create_html_dashboard(
                     None
                     if ball is None or ball.speed is None
                     else round(ball.speed, 2)
+                ),
+                "bsd": (
+                    None
+                    if dashboard_smoothed_speeds[timeline_index] is None
+                    else round(dashboard_smoothed_speeds[timeline_index], 2)
                 ),
                 "p1": (
                     None
@@ -1849,7 +1936,7 @@ def create_html_dashboard(
             <div class="timeline-live-grid" aria-live="polite">
               <div class="live-stat primary"><span class="live-label">Source frame</span><span class="live-value" id="timeline-frame">—</span></div>
               <div class="live-stat"><span class="live-label">Rally / hits</span><span class="live-value" id="timeline-rally">—</span></div>
-              <div class="live-stat"><span class="live-label">Ball speed</span><span class="live-value" id="timeline-speed">—</span></div>
+              <div class="live-stat"><span class="live-label">Ball speed · smooth</span><span class="live-value" id="timeline-speed">—</span></div>
               <div class="live-stat"><span class="live-label">Momentum</span><span class="live-value" id="timeline-momentum">—</span></div>
               <div class="live-stat"><span class="live-label">Score</span><span class="live-value" id="timeline-score">—</span></div>
               <div class="live-stat"><span class="live-label">Tracked positions</span><span class="live-value" id="timeline-positions">—</span></div>
@@ -1861,7 +1948,7 @@ def create_html_dashboard(
             <div class="timeline-legend" aria-label="Timeline legend">
               <span class="legend-item"><span class="legend-swatch"></span>Player 1 momentum</span>
               <span class="legend-item"><span class="legend-swatch player-two"></span>Player 2 momentum</span>
-              <span class="legend-item"><span class="legend-swatch speed"></span>Ball speed</span>
+              <span class="legend-item"><span class="legend-swatch speed"></span>Ball speed · display-smoothed</span>
               <span class="legend-item"><span class="legend-swatch rally"></span>Detected rally</span>
             </div>
           </div>
@@ -1925,6 +2012,7 @@ def create_html_dashboard(
         <summary>How should these metrics be interpreted?</summary>
         <div class="methodology-content">
           <p><strong>Ball speed</strong> is measured in pixels per second, not km/h. Real-world speed requires camera calibration and court-plane perspective correction.</p>
+          <p><strong>Timeline smoothing</strong> affects only the yellow dashboard line and its live readout. CSV exports, rally analytics, momentum, hit estimates, and video annotations continue to use the original measured values.</p>
           <p><strong>Estimated hits</strong> use stable horizontal ball-direction reversals and should be treated as an approximation when detections are missed.</p>
           <p><strong>Momentum</strong> combines ball direction and speed, rally duration, movement efficiency, and available score state. It is an explainable analytical index—not win probability.</p>
         </div>
@@ -2033,10 +2121,10 @@ def create_html_dashboard(
         context.stroke();
       }
 
-      const maxSpeed = Math.max(1, ...timelineData.map((sample) => sample.bs || 0));
+      const maxSpeed = Math.max(1, ...timelineData.map((sample) => sample.bsd || 0));
       drawSeries((sample) => sample.m1, '#4ce6c3', 2.2);
       drawSeries((sample) => sample.m2, '#5d8cff', 2.2);
-      drawSeries((sample) => sample.bs === null ? null : sample.bs / maxSpeed * 100, '#ffcc66', 1.5);
+      drawSeries((sample) => sample.bsd === null ? null : sample.bsd / maxSpeed * 100, '#ffcc66', 1.8);
 
       const playheadX = xAt(activeTimelineIndex);
       context.strokeStyle = 'rgba(255,255,255,0.95)';
@@ -2058,7 +2146,7 @@ def create_html_dashboard(
       timelineScrubber.value = String(activeTimelineIndex);
       timelineFields.frame.textContent = String(sample.f);
       timelineFields.rally.textContent = sample.r ? `R${sample.r} · ~${sample.h} hits` : 'Between rallies';
-      timelineFields.speed.textContent = sample.bs === null ? 'Not detected' : `${sample.bs.toFixed(0)} px/s`;
+      timelineFields.speed.textContent = sample.bsd === null ? 'Not detected' : `${sample.bsd.toFixed(0)} px/s`;
       timelineFields.momentum.textContent = sample.m1 === null ? 'Not available' : `P1 ${sample.m1.toFixed(1)} · P2 ${sample.m2.toFixed(1)}`;
       timelineFields.score.textContent = sample.s1 === null ? 'Not read' : `${sample.s1}–${sample.s2}`;
       const ball = sample.bx === null ? 'ball —' : `ball ${Math.round(sample.bx)},${Math.round(sample.by)}`;
