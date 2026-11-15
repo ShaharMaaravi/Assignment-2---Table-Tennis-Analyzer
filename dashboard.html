@@ -380,7 +380,7 @@
       <div class="media-grid">
         <article class="card">
           <div class="card-header"><div><div class="card-kicker">Full analysis</div><h3 class="card-title">Annotated match segment</h3></div><span class="card-badge">448 frames</span></div>
-          <div class="video-wrap"><video id="analysis-video" controls playsinline preload="metadata"><source src="output_with_detections.mp4" type="video/mp4">Your browser does not support MP4 playback.</video></div>
+          <div class="video-wrap"><video id="analysis-video" controls playsinline preload="metadata"><source src="output_with_detections_web.webm" type="video/webm"><source src="output_with_detections_web.mp4" type="video/mp4"><source src="output_with_detections.mp4" type="video/mp4">Your browser does not support this video.</video></div>
           <div class="timeline-shell">
             <div class="timeline-heading">
               <h4>Interactive match timeline</h4>
@@ -409,7 +409,7 @@
         </article>
         <article class="card">
           <div class="card-header"><div><div class="card-kicker">Auto-curated</div><h3 class="card-title">Top rally highlights</h3></div><span class="card-badge">1 selected</span></div>
-          <div class="video-wrap"><video controls playsinline preload="metadata"><source src="match_highlights.mp4" type="video/mp4">Your browser does not support MP4 playback.</video></div>
+          <div class="video-wrap"><video controls playsinline preload="metadata"><source src="match_highlights_web.webm" type="video/webm"><source src="match_highlights_web.mp4" type="video/mp4"><source src="match_highlights.mp4" type="video/mp4">Your browser does not support this video.</video></div>
           <div class="video-note">Rallies are ranked by duration, estimated hits, peak speed, and combined player movement.</div>
         </article>
       </div>
@@ -672,6 +672,104 @@
     videos.forEach((video) => video.addEventListener('play', () => {
       videos.filter((other) => other !== video).forEach((other) => other.pause());
     }));
+  </script>
+  <script>
+    // A hands-free presentation mode used only for the exercise screen recording.
+    // The regular dashboard is unchanged unless the URL contains ?demo=1.
+    const demoParams = new URLSearchParams(window.location.search);
+    if (demoParams.get('demo') === '1') {
+      const demoStyle = document.createElement('style');
+      demoStyle.textContent = `
+        html { scroll-behavior: smooth; }
+        section, #timeline-canvas-wrap, .methodology { scroll-margin-top: 150px; }
+        .demo-caption {
+          position: fixed; left: 32px; bottom: 28px; z-index: 9999;
+          width: min(560px, calc(100vw - 64px)); padding: 17px 20px 18px;
+          color: #f4f8ff; background: rgba(8, 14, 24, 0.93);
+          border: 1px solid rgba(76, 230, 195, 0.38); border-radius: 16px;
+          box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+          backdrop-filter: blur(16px); transition: opacity 180ms ease, transform 180ms ease;
+          font: 600 16px/1.45 Inter, ui-sans-serif, system-ui, sans-serif;
+        }
+        .demo-caption.is-changing { opacity: 0; transform: translateY(8px); }
+        .demo-caption strong { display: block; margin-bottom: 4px; color: #4ce6c3; font-size: 12px; letter-spacing: .13em; text-transform: uppercase; }
+        .demo-progress { position: fixed; inset: 0 0 auto; z-index: 10000; height: 4px; background: rgba(255,255,255,.08); }
+        .demo-progress span { display: block; width: 0; height: 100%; background: linear-gradient(90deg, #4ce6c3, #5d8cff); transition: width .45s ease; }
+      `;
+      document.head.appendChild(demoStyle);
+
+      const caption = document.createElement('div');
+      caption.className = 'demo-caption';
+      caption.setAttribute('role', 'status');
+      const progress = document.createElement('div');
+      progress.className = 'demo-progress';
+      progress.innerHTML = '<span></span>';
+      document.body.append(progress, caption);
+
+      const wait = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+      const stepsTotal = 14;
+      let currentStep = 0;
+
+      async function present(title, message, target, hold = 5000) {
+        currentStep += 1;
+        caption.classList.add('is-changing');
+        if (target) document.querySelector(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        await wait(650);
+        caption.innerHTML = `<strong>${title}</strong>${message}`;
+        caption.classList.remove('is-changing');
+        progress.firstElementChild.style.width = `${(currentStep / stepsTotal) * 100}%`;
+        await wait(hold);
+      }
+
+      async function runDemo() {
+        window.scrollTo({ top: 0, behavior: 'instant' });
+        await present('Exercise 1 · RallyIQ', 'A complete table-tennis analysis pipeline—from raw match video to explainable match intelligence.', '#top', 5500);
+        await present('Validated match snapshot', 'Invalid broadcast cuts are removed before analysis. This run kept 448 frames and detected players, poses, and the ball.', '#overview', 5500);
+        await present('Computer vision playback', 'YOLO Pose draws player boxes and skeletons while the trained RF-DETR model tracks the ball and its speed-colored trail.', '#playback', 2500);
+
+        const analysisVideo = document.getElementById('analysis-video');
+        analysisVideo.muted = true;
+        analysisVideo.loop = true;
+        try { await analysisVideo.play(); } catch (_) {}
+        await present('Live synchronized analytics', 'While the processed video plays, source frame, rally state, smoothed ball speed, momentum, score, and positions update together.', '#playback', 10500);
+
+        analysisVideo.pause();
+        if (Number.isFinite(analysisVideo.duration)) analysisVideo.currentTime = analysisVideo.duration * 0.72;
+        await present('Interactive timeline', 'The timeline can be played, scrubbed, or clicked to inspect any processed frame without changing the underlying measurements.', '#timeline-canvas-wrap', 6000);
+
+        const highlightVideo = document.querySelector('video:not(#analysis-video)');
+        if (highlightVideo) {
+          highlightVideo.muted = true;
+          highlightVideo.loop = true;
+          try { await highlightVideo.play(); } catch (_) {}
+        }
+        await present('Automatic rally highlights', 'The best rally is selected using duration, estimated hits, peak speed, and combined player movement.', '#playback', 6500);
+        highlightVideo?.pause();
+
+        await present('Visual intelligence', 'Every analytical layer is available in one responsive dashboard and can be downloaded at full resolution.', '#insights', 2500);
+        const chartNames = ['Player heatmap', 'Ball speed', 'Rally analysis', 'Score'];
+        const chartMessages = [
+          'Position density reveals where each player spends the most time on court.',
+          'Display-only smoothing makes ball-speed trends readable without altering any source metrics.',
+          'Rally statistics combine duration, hits, speed, movement, and an excitement score.',
+          'EasyOCR score readings are converted to a single calculated score and charted over time.'
+        ];
+        for (let index = 0; index < chartNames.length; index += 1) {
+          const button = [...document.querySelectorAll('.chart-tab')].find((item) => item.textContent.trim() === chartNames[index]);
+          button?.click();
+          await present(chartNames[index], chartMessages[index], '#insights', 4000);
+        }
+
+        await present('Structured results', 'Detected rally statistics and four reusable CSV datasets are ready for reports and further experiments.', '#data', 5500);
+        const methodology = document.querySelector('.methodology');
+        if (methodology) methodology.open = true;
+        await present('Transparent methodology', 'The dashboard documents how validity checks, tracking, speed smoothing, rallies, score, and momentum are calculated.', '.methodology', 4500);
+        await present('Exercise 1 complete', 'One pipeline, one dashboard: pose tracking, ball intelligence, score OCR, rallies, highlights, momentum, and exports.', '#top', 5500);
+      }
+
+      const demoDelay = Math.max(500, Number(demoParams.get('delay')) || 1200);
+      window.addEventListener('load', () => window.setTimeout(runDemo, demoDelay), { once: true });
+    }
   </script>
 </body>
 </html>
